@@ -12,6 +12,7 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios
             // see https://aka.ms/applicationconfiguration.
             ApplicationConfiguration.Initialize();
             Application.Run(new Main());
+            Console.WriteLine("Hello, World!");
         }
     }
 }
