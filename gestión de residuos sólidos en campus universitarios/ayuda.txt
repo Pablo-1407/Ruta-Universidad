@@ -1,0 +1,256 @@
+==============================================================================
+PROYECTO: Sistema inteligente para la optimizacion de rutas y gestion de
+          residuos solidos en campus universitarios
+          (algoritmos de priorizacion y modelamiento matematico)
+==============================================================================
+Tecnologia : C# - Windows Forms - Visual Studio 2026 - GitHub
+Arquitectura: Capas + MVP (Model-View-Presenter)
+Autores    : Ingrith Galvis, Pablo Jaimes, Juan Ortiz, Edrey Santos
+
+
+==============================================================================
+1. DESCRIPCION GENERAL
+==============================================================================
+El sistema modela el campus como un grafo (nodos = puntos de recoleccion,
+aristas = caminos con su distancia). A partir de los datos de cada punto
+(nivel de llenado, generacion de residuos, dias sin recoleccion, tipo de
+zona) calcula una prioridad, selecciona los puntos que requieren atencion y
+genera un recorrido de recoleccion eficiente. Finalmente compara contra una
+ruta sin optimizar para mostrar el ahorro obtenido.
+
+
+==============================================================================
+2. REQUERIMIENTOS FUNCIONALES (RF)
+==============================================================================
+RF-01  Registrar, editar y eliminar puntos de recoleccion (nombre, posicion
+       X/Y, capacidad, nivel de llenado, generacion kg/dia, dias sin
+       recoleccion, peso de zona).
+RF-02  Registrar y editar conexiones (aristas) entre puntos con su distancia
+       en metros.
+RF-03  Calcular la prioridad de cada punto mediante una formula ponderada
+       (modelo matematico).
+RF-04  Mostrar el listado de puntos ordenados de mayor a menor prioridad.
+RF-05  Calcular las distancias minimas entre puntos usando el algoritmo de
+       Dijkstra.
+RF-06  Generar una ruta de recoleccion para los N puntos mas prioritarios
+       usando la estrategia del vecino mas cercano.
+RF-07  Permitir elegir la estrategia de ruta (sin optimizar / optimizada).
+RF-08  Mostrar la ruta en una tabla (orden de visita) y dibujar el grafo y
+       la ruta en un panel grafico.
+RF-09  Calcular indicadores: distancia total, ahorro porcentual frente a la
+       ruta sin optimizar, kg estimados a recolectar.
+RF-10  Guardar y cargar los datos del campus desde un archivo (JSON).
+RF-11  Validar los datos ingresados (distancias positivas, porcentajes de
+       0 a 100, nombres no vacios, sin puntos duplicados).
+RF-12  (Opcional) Exportar el resultado de la ruta a CSV o PDF.
+
+
+==============================================================================
+3. REQUERIMIENTOS NO FUNCIONALES (RNF)
+==============================================================================
+RNF-01  Mantenibilidad: codigo separado en capas, sin logica de negocio en
+        los formularios.
+RNF-02  Extensibilidad: nuevos algoritmos (ej. colonia de hormigas, Kruskal)
+        deben agregarse sin modificar el codigo existente (patron Strategy).
+RNF-03  Usabilidad: interfaz de una sola ventana principal, clara y con
+        mensajes de error comprensibles.
+RNF-04  Rendimiento: la generacion de rutas para hasta 50 puntos debe
+        responder en menos de 2 segundos.
+RNF-05  Portabilidad de datos: la persistencia debe poder cambiarse (JSON,
+        SQLite) sin tocar servicios ni algoritmos (patron Repository).
+RNF-06  Pruebas: la logica (algoritmos y servicios) debe poder probarse sin
+        abrir la interfaz grafica.
+RNF-07  Control de versiones: proyecto en GitHub, ramas por funcionalidad y
+        commits pequenos y descriptivos.
+RNF-08  El grafo debe implementarse desde cero (sin librerias externas de
+        grafos), segun requerimiento academico de software.
+
+
+==============================================================================
+4. ESTRUCTURA DE LA SOLUCION
+==============================================================================
+RutasResiduosCampus/
+|
+|-- Domain/                      Modelos puros, sin dependencias de WinForms
+|   |-- PuntoRecoleccion.cs
+|   |-- GrafoCampus.cs           Grafo propio (lista de adyacencia)
+|   |-- Ruta.cs                  Puntos en orden + distancia total
+|   `-- ResultadoRecoleccion.cs  Ruta + indicadores
+|
+|-- Algorithms/                  Modelamiento matematico
+|   |-- Priorizacion/
+|   |   |-- IEstrategiaPriorizacion.cs
+|   |   `-- PriorizacionPonderada.cs
+|   `-- Rutas/
+|       |-- IEstrategiaRuta.cs
+|       |-- Dijkstra.cs
+|       |-- VecinoMasCercano.cs
+|       `-- RutaSinOptimizar.cs  Linea base para comparar el ahorro
+|
+|-- Services/                    Logica de negocio / orquestacion
+|   |-- RecoleccionService.cs
+|   `-- IndicadoresService.cs
+|
+|-- Data/                        Persistencia
+|   |-- IPuntoRepository.cs
+|   |-- JsonPuntoRepository.cs
+|   `-- campus.json              Datos de ejemplo
+|
+|-- Presenters/                  Intermediario entre vista y logica
+|   `-- RutaPresenter.cs
+|
+|-- Views/                       Interfaz de usuario
+|   |-- IRutaView.cs
+|   `-- FrmPrincipal.cs
+|
+|-- Common/
+|   `-- Validaciones.cs
+|
+`-- Program.cs                   Composicion: crea e inyecta las dependencias
+
+
+==============================================================================
+5. PATRONES DE DISENO Y JUSTIFICACION
+==============================================================================
+Strategy      Priorizacion y calculo de ruta son intercambiables detras de
+              una interfaz. Permite comparar algoritmos y extender el sistema.
+Repository    Aisla el origen de los datos (JSON hoy, SQLite manana).
+MVP           La vista solo muestra y avisa eventos; el Presenter decide.
+              Es la variante de MVC adecuada para escritorio (WinForms).
+Service Layer Reglas de negocio separadas de la interfaz y de los datos.
+Inyeccion de
+dependencias  Manual por constructor en Program.cs, sin frameworks.
+
+
+==============================================================================
+6. MODELO MATEMATICO
+==============================================================================
+6.1 Prioridad de un punto (suma ponderada, valores normalizados 0 a 1):
+
+    Prioridad = 0.4 * Llenado/100
+              + 0.3 * Generacion / MaxGeneracion
+              + 0.2 * DiasSinRecoleccion / MaxDias
+              + 0.1 * PesoZona / MaxPesoZona
+
+    Los pesos son ajustables y deben justificarse en el articulo.
+
+6.2 Distancia minima entre puntos: algoritmo de Dijkstra sobre el grafo.
+
+6.3 Orden del recorrido: heuristica del vecino mas cercano, partiendo del
+    punto inicial (cuarto de aseo o acopio) y visitando siempre el punto
+    pendiente mas cercano segun Dijkstra.
+
+6.4 Ahorro porcentual:
+
+    Ahorro % = (DistRutaSinOptimizar - DistRutaOptimizada)
+               / DistRutaSinOptimizar * 100
+
+
+==============================================================================
+7. CLASES CLAVE (RESUMEN)
+==============================================================================
+PuntoRecoleccion
+    Id, Nombre, X, Y, NivelLlenadoPct, GeneracionKgDia,
+    DiasSinRecoleccion, PesoZona
+
+GrafoCampus
+    Nodos, AgregarNodo(id), AgregarArista(origen, destino, metros),
+    Vecinos(id)
+
+IEstrategiaPriorizacion
+    IList<PuntoRecoleccion> Priorizar(IEnumerable<PuntoRecoleccion>)
+
+IEstrategiaRuta
+    Ruta Calcular(GrafoCampus, IList<PuntoRecoleccion>, int idInicio)
+
+IPuntoRepository
+    ObtenerTodos(), Guardar(punto), Eliminar(id)
+
+IRutaView
+    Propiedad CantidadPuntos
+    Evento GenerarRutaClick
+    MostrarRuta(Ruta), MostrarIndicadores(distancia, ahorroPct),
+    MostrarMensaje(texto)
+
+RutaPresenter
+    Suscribe los eventos de IRutaView, llama a RecoleccionService y
+    devuelve el resultado a la vista.
+
+
+==============================================================================
+8. FLUJO PRINCIPAL
+==============================================================================
+1. El usuario abre la aplicacion; Program.cs crea repositorio, algoritmos,
+   servicio, presenter y formulario.
+2. Se cargan los puntos y las conexiones desde campus.json.
+3. El usuario elige cuantos puntos atender y la estrategia de ruta.
+4. Pulsa "Generar ruta" -> la vista lanza el evento -> el Presenter llama
+   a RecoleccionService.
+5. El servicio prioriza, toma los N primeros, calcula la ruta y los
+   indicadores.
+6. El Presenter envia el resultado a la vista, que lo muestra en la tabla,
+   en el panel grafico y en las etiquetas de indicadores.
+
+
+==============================================================================
+9. PANTALLA PRINCIPAL (FrmPrincipal)
+==============================================================================
+- DataGridView: puntos con su puntaje de prioridad.
+- Panel de dibujo (GDI+): grafo del campus y ruta resaltada.
+- NumericUpDown: cantidad de puntos a atender.
+- ComboBox: estrategia de ruta.
+- Boton "Generar ruta".
+- Etiquetas: distancia total, ahorro %, kg estimados.
+
+
+==============================================================================
+10. EJEMPLO DE DATOS (campus.txt)
+==============================================================================
+{
+  "puntos": [
+    { "id": 1, "nombre": "Biblioteca", "x": 100, "y": 80,
+      "nivelLlenadoPct": 70, "generacionKgDia": 12,
+      "diasSinRecoleccion": 2, "pesoZona": 1 },
+    { "id": 2, "nombre": "Cafeteria", "x": 220, "y": 90,
+      "nivelLlenadoPct": 95, "generacionKgDia": 40,
+      "diasSinRecoleccion": 1, "pesoZona": 2 },
+    { "id": 3, "nombre": "Bloque A", "x": 150, "y": 200,
+      "nivelLlenadoPct": 40, "generacionKgDia": 18,
+      "diasSinRecoleccion": 3, "pesoZona": 1 },
+    { "id": 4, "nombre": "Bloque B", "x": 300, "y": 210,
+      "nivelLlenadoPct": 60, "generacionKgDia": 22,
+      "diasSinRecoleccion": 4, "pesoZona": 1 }
+  ],
+  "aristas": [
+    { "origen": 1, "destino": 2, "metros": 50 },
+    { "origen": 1, "destino": 3, "metros": 80 },
+    { "origen": 2, "destino": 4, "metros": 120 },
+    { "origen": 3, "destino": 4, "metros": 60 }
+  ]
+}
+
+
+==============================================================================
+11. ORDEN DE CONSTRUCCION SUGERIDO
+==============================================================================
+Fase 1  Domain + Data: modelos, GrafoCampus y lectura de campus.json.
+Fase 2  Algorithms: Dijkstra, PriorizacionPonderada, VecinoMasCercano,
+        RutaSinOptimizar. Probar con los 4 puntos de ejemplo.
+Fase 3  Services: RecoleccionService e IndicadoresService.
+Fase 4  Presenters + Views: IRutaView, RutaPresenter, FrmPrincipal.
+Fase 5  Dibujo del grafo y la ruta en el panel (GDI+).
+Fase 6  Validaciones, manejo de errores y pruebas finales.
+Fase 7  Documentacion y resultados para el articulo (tablas de ahorro).
+
+
+12. CRITERIOS DE ACEPTACION
+==============================================================================
+- El grafo se crea desde cero y Dijkstra devuelve la distancia minima
+  correcta en los datos de ejemplo (de 1 a 4 = 140 m).
+- La lista de puntos se ordena segun la prioridad calculada.
+- La ruta optimizada tiene distancia menor o igual que la no optimizada.
+- Los formularios no contienen logica de negocio ni acceso a datos.
+- Se puede cambiar JsonPuntoRepository por otro repositorio sin modificar
+  servicios ni algoritmos.
+- Datos invalidos muestran un mensaje y no rompen la aplicacion.
+==============================================================================
