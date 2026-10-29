@@ -204,8 +204,9 @@ RutaPresenter
 
 
 ==============================================================================
-10. EJEMPLO DE DATOS (campus.txt)
+10. EJEMPLO DE DATOS (puntos.txt)
 ==============================================================================
+asi no separado por comas
 {
   "puntos": [
     { "id": 1, "nombre": "Biblioteca", "x": 100, "y": 80,
@@ -221,6 +222,7 @@ RutaPresenter
       "nivelLlenadoPct": 60, "generacionKgDia": 22,
       "diasSinRecoleccion": 4, "pesoZona": 1 }
   ],
+  en otro txt
   "aristas": [
     { "origen": 1, "destino": 2, "metros": 50 },
     { "origen": 1, "destino": 3, "metros": 80 },
@@ -233,7 +235,7 @@ RutaPresenter
 ==============================================================================
 11. ORDEN DE CONSTRUCCION SUGERIDO
 ==============================================================================
-Fase 1  Domain + Data: modelos, GrafoCampus y lectura de campus.json.
+Fase 1  Domain + Data: modelos, GrafoCampus y lectura de campus.txt.
 Fase 2  Algorithms: Dijkstra, PriorizacionPonderada, VecinoMasCercano,
         RutaSinOptimizar. Probar con los 4 puntos de ejemplo.
 Fase 3  Services: RecoleccionService e IndicadoresService.
@@ -250,7 +252,6 @@ Fase 7  Documentacion y resultados para el articulo (tablas de ahorro).
 - La lista de puntos se ordena segun la prioridad calculada.
 - La ruta optimizada tiene distancia menor o igual que la no optimizada.
 - Los formularios no contienen logica de negocio ni acceso a datos.
-- Se puede cambiar JsonPuntoRepository por otro repositorio sin modificar
-  servicios ni algoritmos.
+- repository y datastore son intercambiables sin tocar la logica ni la interfaz.
 - Datos invalidos muestran un mensaje y no rompen la aplicacion.
 ==============================================================================
