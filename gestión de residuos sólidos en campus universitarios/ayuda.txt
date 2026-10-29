@@ -39,7 +39,7 @@ RF-08  Mostrar la ruta en una tabla (orden de visita) y dibujar el grafo y
        la ruta en un panel grafico.
 RF-09  Calcular indicadores: distancia total, ahorro porcentual frente a la
        ruta sin optimizar, kg estimados a recolectar.
-RF-10  Guardar y cargar los datos del campus desde un archivo (JSON).
+RF-10  Guardar y cargar los datos del campus desde un archivo de texto (TXT).
 RF-11  Validar los datos ingresados (distancias positivas, porcentajes de
        0 a 100, nombres no vacios, sin puntos duplicados).
 RF-12  (Opcional) Exportar el resultado de la ruta a CSV o PDF.
@@ -56,8 +56,8 @@ RNF-03  Usabilidad: interfaz de una sola ventana principal, clara y con
         mensajes de error comprensibles.
 RNF-04  Rendimiento: la generacion de rutas para hasta 50 puntos debe
         responder en menos de 2 segundos.
-RNF-05  Portabilidad de datos: la persistencia debe poder cambiarse (JSON,
-        SQLite) sin tocar servicios ni algoritmos (patron Repository).
+RNF-05  Portabilidad de datos: la persistencia debe poder cambiarse (TXT,
+        JSON o SQLite) sin tocar servicios ni algoritmos (patron Repository).
 RNF-06  Pruebas: la logica (algoritmos y servicios) debe poder probarse sin
         abrir la interfaz grafica.
 RNF-07  Control de versiones: proyecto en GitHub, ramas por funcionalidad y
@@ -74,6 +74,8 @@ RutasResiduosCampus/
 |-- Domain/                      Modelos puros, sin dependencias de WinForms
 |   |-- PuntoRecoleccion.cs
 |   |-- GrafoCampus.cs           Grafo propio (lista de adyacencia)
+|   |-- ConexionCampus.cs
+|   |-- CampusData.cs
 |   |-- Ruta.cs                  Puntos en orden + distancia total
 |   `-- ResultadoRecoleccion.cs  Ruta + indicadores
 |
@@ -93,8 +95,8 @@ RutasResiduosCampus/
 |
 |-- Data/                        Persistencia
 |   |-- IPuntoRepository.cs
-|   |-- JsonPuntoRepository.cs
-|   `-- campus.json              Datos de ejemplo
+|   |-- TxtCampusRepository.cs
+|   `-- campus.txt               Datos de ejemplo
 |
 |-- Presenters/                  Intermediario entre vista y logica
 |   `-- RutaPresenter.cs
@@ -114,7 +116,7 @@ RutasResiduosCampus/
 ==============================================================================
 Strategy      Priorizacion y calculo de ruta son intercambiables detras de
               una interfaz. Permite comparar algoritmos y extender el sistema.
-Repository    Aisla el origen de los datos (JSON hoy, SQLite manana).
+Repository    Aisla el origen de los datos (TXT hoy, JSON o SQLite manana).
 MVP           La vista solo muestra y avisa eventos; el Presenter decide.
               Es la variante de MVC adecuada para escritorio (WinForms).
 Service Layer Reglas de negocio separadas de la interfaz y de los datos.
@@ -150,7 +152,7 @@ dependencias  Manual por constructor en Program.cs, sin frameworks.
 7. CLASES CLAVE (RESUMEN)
 ==============================================================================
 PuntoRecoleccion
-    Id, Nombre, X, Y, NivelLlenadoPct, GeneracionKgDia,
+    Id, Nombre, Tipo (Recoleccion/CentroAcopio), X, Y, NivelLlenadoPct, GeneracionKgDia,
     DiasSinRecoleccion, PesoZona
 
 GrafoCampus
@@ -182,7 +184,7 @@ RutaPresenter
 ==============================================================================
 1. El usuario abre la aplicacion; Program.cs crea repositorio, algoritmos,
    servicio, presenter y formulario.
-2. Se cargan los puntos y las conexiones desde campus.json.
+2. Se cargan los puntos y las conexiones desde campus.txt.
 3. El usuario elige cuantos puntos atender y la estrategia de ruta.
 4. Pulsa "Generar ruta" -> la vista lanza el evento -> el Presenter llama
    a RecoleccionService.
@@ -204,32 +206,28 @@ RutaPresenter
 
 
 ==============================================================================
-10. EJEMPLO DE DATOS (puntos.txt)
+10. EJEMPLO DE DATOS (campus.txt)
 ==============================================================================
-asi no separado por comas
-{
-  "puntos": [
-    { "id": 1, "nombre": "Biblioteca", "x": 100, "y": 80,
-      "nivelLlenadoPct": 70, "generacionKgDia": 12,
-      "diasSinRecoleccion": 2, "pesoZona": 1 },
-    { "id": 2, "nombre": "Cafeteria", "x": 220, "y": 90,
-      "nivelLlenadoPct": 95, "generacionKgDia": 40,
-      "diasSinRecoleccion": 1, "pesoZona": 2 },
-    { "id": 3, "nombre": "Bloque A", "x": 150, "y": 200,
-      "nivelLlenadoPct": 40, "generacionKgDia": 18,
-      "diasSinRecoleccion": 3, "pesoZona": 1 },
-    { "id": 4, "nombre": "Bloque B", "x": 300, "y": 210,
-      "nivelLlenadoPct": 60, "generacionKgDia": 22,
-      "diasSinRecoleccion": 4, "pesoZona": 1 }
-  ],
-  en otro txt
-  "aristas": [
-    { "origen": 1, "destino": 2, "metros": 50 },
-    { "origen": 1, "destino": 3, "metros": 80 },
-    { "origen": 2, "destino": 4, "metros": 120 },
-    { "origen": 3, "destino": 4, "metros": 60 }
-  ]
-}
+Cada campo se separa por una tabulacion. P almacena un punto y C una
+conexion. Las coordenadas X/Y son proporciones entre 0 y 1 de la imagen.
+El tipo es ACOPIO o RECOLECCION; el centro no requiere datos de residuos.
+
+RUTAS_RESIDUOS_CAMPUS<TAB>1
+IMAGEN<TAB>campus_mapa.png
+PUNTOS
+P<TAB>1<TAB>ACOPIO<TAB>Centro de acopio<TAB>0.10<TAB>0.10<TAB>0<TAB>0<TAB>0<TAB>0
+P<TAB>2<TAB>RECOLECCION<TAB>Biblioteca<TAB>0.25<TAB>0.20<TAB>70<TAB>12<TAB>2<TAB>1
+P<TAB>3<TAB>RECOLECCION<TAB>Cafeteria<TAB>0.55<TAB>0.22<TAB>95<TAB>40<TAB>1<TAB>2
+P<TAB>4<TAB>RECOLECCION<TAB>Bloque A<TAB>0.38<TAB>0.58<TAB>40<TAB>18<TAB>3<TAB>1
+P<TAB>5<TAB>RECOLECCION<TAB>Bloque B<TAB>0.75<TAB>0.62<TAB>60<TAB>22<TAB>4<TAB>1
+CONEXIONES
+C<TAB>1<TAB>2<TAB>35
+C<TAB>1<TAB>3<TAB>50
+C<TAB>1<TAB>4<TAB>80
+C<TAB>1<TAB>5<TAB>120
+C<TAB>2<TAB>3<TAB>50
+C<TAB>3<TAB>4<TAB>60
+C<TAB>4<TAB>5<TAB>60
 
 
 ==============================================================================
