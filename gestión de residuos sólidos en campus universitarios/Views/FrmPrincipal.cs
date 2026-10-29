@@ -9,13 +9,23 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios
     {
         private readonly DataGridView _tablaPuntos = CrearTabla();
         private readonly DataGridView _tablaConexiones = CrearTabla();
+        private readonly DataGridView _tablaRuta = CrearTabla();
         private readonly MapCanvas _mapa = new();
         private readonly Label _estado = new();
+        private readonly NumericUpDown _cantidadPuntos = new();
+        private readonly ComboBox _estrategiaRuta = new();
+        private readonly Button _botonGenerarRuta = new();
+        private readonly Label _distanciaOptimizada = new();
+        private readonly Label _distanciaBase = new();
+        private readonly Label _ahorro = new();
+        private readonly Label _kilos = new();
+        private ResultadoRecoleccion? _ultimoResultado;
 
         public event Action<double, double>? MapaPulsado;
         public event Action? ImagenMapaSolicitada;
         public event Action? CargarCampusSolicitado;
         public event Action? GuardarCampusSolicitado;
+        public event Action? GenerarRutaSolicitada;
         public event Action? EditarPuntoSolicitado;
         public event Action? EliminarPuntoSolicitado;
         public event Action? AgregarConexionSolicitada;
@@ -26,6 +36,7 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios
         private ConexionCampus? ConexionSeleccionadaActual => _tablaConexiones.CurrentRow?.Tag as ConexionCampus;
 
         int? IRutaView.PuntoSeleccionadoId => PuntoSeleccionadoIdActual;
+        int IRutaView.CantidadPuntosSeleccionados => decimal.ToInt32(_cantidadPuntos.Value);
         ConexionCampus? IRutaView.ConexionSeleccionada => ConexionSeleccionadaActual;
 
         public Main()
@@ -99,6 +110,33 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios
             barra.Controls.Add(CrearBoton("Abrir campus", (_, _) => CargarCampusSolicitado?.Invoke()));
             barra.Controls.Add(CrearBoton("Guardar campus", (_, _) => GuardarCampusSolicitado?.Invoke()));
             barra.Controls.Add(CrearBoton("Cargar imagen", (_, _) => ImagenMapaSolicitada?.Invoke()));
+            barra.Controls.Add(new Label
+            {
+                Text = "Puntos a atender:",
+                AutoSize = true,
+                Anchor = AnchorStyles.Left,
+                Margin = new Padding(12, 8, 3, 3)
+            });
+            _cantidadPuntos.Minimum = 1;
+            _cantidadPuntos.Maximum = 50;
+            _cantidadPuntos.Value = 1;
+            _cantidadPuntos.Width = 58;
+            _cantidadPuntos.Margin = new Padding(3, 4, 8, 3);
+            barra.Controls.Add(_cantidadPuntos);
+
+            _estrategiaRuta.DropDownStyle = ComboBoxStyle.DropDownList;
+            _estrategiaRuta.Items.AddRange(["Optimizada", "Sin optimizar"]);
+            _estrategiaRuta.SelectedIndex = 0;
+            _estrategiaRuta.Width = 145;
+            _estrategiaRuta.Margin = new Padding(3, 4, 3, 3);
+            barra.Controls.Add(_estrategiaRuta);
+
+            _botonGenerarRuta.Text = "Generar ruta";
+            _botonGenerarRuta.AutoSize = true;
+            _botonGenerarRuta.MinimumSize = new Size(110, 30);
+            _botonGenerarRuta.Margin = new Padding(8, 3, 3, 3);
+            _botonGenerarRuta.Click += (_, _) => GenerarRutaSolicitada?.Invoke();
+            barra.Controls.Add(_botonGenerarRuta);
             return barra;
         }
 
@@ -142,9 +180,52 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios
             panelListas.Controls.Add(CrearGrupoConexiones(), 0, 1);
             division.Panel1.Controls.Add(panelListas);
 
+            TableLayoutPanel panelRuta = new()
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 3,
+                Padding = new Padding(4, 0, 0, 0)
+            };
+            panelRuta.RowStyles.Add(new RowStyle(SizeType.Percent, 64));
+            panelRuta.RowStyles.Add(new RowStyle(SizeType.Percent, 27));
+            panelRuta.RowStyles.Add(new RowStyle(SizeType.Absolute, 72));
             _mapa.Dock = DockStyle.Fill;
-            division.Panel2.Controls.Add(_mapa);
+            panelRuta.Controls.Add(_mapa, 0, 0);
+
+            GroupBox grupoRuta = new()
+            {
+                Text = "Orden de visita",
+                Dock = DockStyle.Fill,
+                Padding = new Padding(6)
+            };
+            _tablaRuta.Dock = DockStyle.Fill;
+            grupoRuta.Controls.Add(_tablaRuta);
+            panelRuta.Controls.Add(grupoRuta, 0, 1);
+            panelRuta.Controls.Add(CrearPanelIndicadores(), 0, 2);
+            division.Panel2.Controls.Add(panelRuta);
             return division;
+        }
+
+        private Control CrearPanelIndicadores()
+        {
+            FlowLayoutPanel panel = new()
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = true,
+                Padding = new Padding(4)
+            };
+
+            foreach (Label indicador in new[] { _distanciaOptimizada, _distanciaBase, _ahorro, _kilos })
+            {
+                indicador.AutoSize = true;
+                indicador.Margin = new Padding(8, 6, 8, 2);
+                indicador.Text = "—";
+                panel.Controls.Add(indicador);
+            }
+
+            return panel;
         }
 
         private Control CrearGrupoPuntos()
@@ -247,11 +328,16 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios
             _tablaPuntos.Columns.Add(new DataGridViewTextBoxColumn { Name = "Generacion", HeaderText = "kg/día", FillWeight = 75 });
             _tablaPuntos.Columns.Add(new DataGridViewTextBoxColumn { Name = "Dias", HeaderText = "Días", FillWeight = 55 });
             _tablaPuntos.Columns.Add(new DataGridViewTextBoxColumn { Name = "Zona", HeaderText = "Zona", FillWeight = 55 });
+            _tablaPuntos.Columns.Add(new DataGridViewTextBoxColumn { Name = "Prioridad", HeaderText = "Prioridad", FillWeight = 70 });
+            _tablaRuta.Columns.Add(new DataGridViewTextBoxColumn { Name = "Orden", HeaderText = "Orden", FillWeight = 55 });
+            _tablaRuta.Columns.Add(new DataGridViewTextBoxColumn { Name = "Punto", HeaderText = "Punto", FillWeight = 130 });
+            _tablaRuta.Columns.Add(new DataGridViewTextBoxColumn { Name = "Prioridad", HeaderText = "Prioridad", FillWeight = 75 });
             _tablaConexiones.Columns.Add(new DataGridViewTextBoxColumn { Name = "Origen", HeaderText = "Origen", FillWeight = 100 });
             _tablaConexiones.Columns.Add(new DataGridViewTextBoxColumn { Name = "Destino", HeaderText = "Destino", FillWeight = 100 });
             _tablaConexiones.Columns.Add(new DataGridViewTextBoxColumn { Name = "Metros", HeaderText = "Metros", FillWeight = 65 });
 
             _tablaPuntos.SelectionChanged += (_, _) => _mapa.SeleccionarPunto(PuntoSeleccionadoIdActual);
+            _estrategiaRuta.SelectedIndexChanged += (_, _) => MostrarRutaSeleccionada();
             _mapa.UbicacionPulsada += (x, y) => MapaPulsado?.Invoke(x, y);
             _mapa.PuntoPulsado += SeleccionarPuntoEnTabla;
         }
@@ -337,6 +423,14 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios
 
         void IRutaView.MostrarCampus(CampusData campus)
         {
+            _ultimoResultado = null;
+            _tablaRuta.Rows.Clear();
+            _mapa.MostrarRuta([]);
+            _distanciaOptimizada.Text = "Distancia optimizada: —";
+            _distanciaBase.Text = "Distancia base: —";
+            _ahorro.Text = "Ahorro: —";
+            _kilos.Text = "Kg estimados: —";
+
             _tablaPuntos.Rows.Clear();
             foreach (PuntoRecoleccion punto in campus.Puntos.OrderBy(p => p.Id))
             {
@@ -347,9 +441,16 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios
                     punto.NivelLlenadoPct.ToString("0.#", CultureInfo.CurrentCulture),
                     punto.GeneracionKgDia.ToString("0.##", CultureInfo.CurrentCulture),
                     punto.DiasSinRecoleccion,
-                    punto.PesoZona.ToString("0.##", CultureInfo.CurrentCulture));
+                    punto.PesoZona.ToString("0.##", CultureInfo.CurrentCulture),
+                    string.Empty);
                 _tablaPuntos.Rows[indice].Tag = punto;
             }
+
+            int totalPuntosRecoleccion = campus.Puntos.Count(p => p.Tipo == TipoPunto.Recoleccion);
+            decimal maximoSeleccionable = Math.Max(1, Math.Min(50, totalPuntosRecoleccion));
+            _cantidadPuntos.Value = Math.Min(_cantidadPuntos.Value, maximoSeleccionable);
+            _cantidadPuntos.Maximum = maximoSeleccionable;
+            _botonGenerarRuta.Enabled = totalPuntosRecoleccion > 0;
 
             _tablaConexiones.Rows.Clear();
             Dictionary<int, string> nombres = campus.Puntos.ToDictionary(p => p.Id, p => p.Nombre);
@@ -378,6 +479,59 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios
                 : "Haz clic en una zona vacía del mapa para añadir un punto; selecciona una conexión en la lista para editarla.";
         }
 
+        void IRutaView.MostrarResultado(ResultadoRecoleccion resultado)
+        {
+            _ultimoResultado = resultado;
+            Dictionary<int, double> prioridades = resultado.PuntosPrioritarios
+                .ToDictionary(p => p.Punto.Id, p => p.Puntaje);
+            foreach (DataGridViewRow fila in _tablaPuntos.Rows)
+            {
+                if (fila.Tag is PuntoRecoleccion punto && prioridades.TryGetValue(punto.Id, out double prioridad))
+                {
+                    fila.Cells["Prioridad"].Value = prioridad.ToString("0.000", CultureInfo.CurrentCulture);
+                }
+            }
+
+            MostrarRutaSeleccionada();
+        }
+
+        private void MostrarRutaSeleccionada()
+        {
+            if (_ultimoResultado is null)
+            {
+                return;
+            }
+
+            bool optimizada = _estrategiaRuta.SelectedIndex != 1;
+            Ruta ruta = optimizada ? _ultimoResultado.RutaOptimizada : _ultimoResultado.RutaBase;
+            _mapa.MostrarRuta(ruta.PuntosRecorrido);
+            _tablaRuta.Rows.Clear();
+
+            if (ruta.PuntosRecorrido.Count > 0)
+            {
+                PuntoRecoleccion centro = ruta.PuntosRecorrido[0];
+                _tablaRuta.Rows.Add("Salida", $"{centro.Nombre} (acopio)", string.Empty);
+
+                Dictionary<int, double> prioridades = _ultimoResultado.PuntosPrioritarios
+                    .ToDictionary(p => p.Punto.Id, p => p.Puntaje);
+                for (int indice = 0; indice < ruta.PuntosVisitados.Count; indice++)
+                {
+                    PuntoRecoleccion punto = ruta.PuntosVisitados[indice];
+                    string prioridad = prioridades.TryGetValue(punto.Id, out double puntaje)
+                        ? puntaje.ToString("0.000", CultureInfo.CurrentCulture)
+                        : string.Empty;
+                    _tablaRuta.Rows.Add(indice + 1, punto.Nombre, prioridad);
+                }
+
+                _tablaRuta.Rows.Add("Regreso", $"{centro.Nombre} (acopio)", string.Empty);
+            }
+
+            _distanciaOptimizada.Text = $"Optimizada: {_ultimoResultado.RutaOptimizada.DistanciaTotal.ToString("0.##", CultureInfo.CurrentCulture)} m";
+            _distanciaBase.Text = $"Base: {_ultimoResultado.RutaBase.DistanciaTotal.ToString("0.##", CultureInfo.CurrentCulture)} m";
+            _ahorro.Text = $"Ahorro: {_ultimoResultado.AhorroPorcentual.ToString("0.##", CultureInfo.CurrentCulture)} %";
+            _kilos.Text = $"Kg estimados: {_ultimoResultado.KilosEstimados.ToString("0.##", CultureInfo.CurrentCulture)}";
+        }
+
         public void MostrarMensaje(string mensaje, bool error = false)
         {
             MessageBox.Show(
@@ -397,6 +551,7 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios
             private string? _rutaImagen;
             private IReadOnlyList<PuntoRecoleccion> _puntos = [];
             private IReadOnlyList<ConexionCampus> _conexiones = [];
+            private IReadOnlyList<PuntoRecoleccion> _ruta = [];
             private int? _puntoSeleccionadoId;
 
             public event Action<double, double>? UbicacionPulsada;
@@ -431,6 +586,12 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios
                 _imagen?.Dispose();
                 _imagen = copia;
                 _rutaImagen = rutaCompleta;
+                Invalidate();
+            }
+
+            public void MostrarRuta(IReadOnlyList<PuntoRecoleccion> ruta)
+            {
+                _ruta = ruta.ToList();
                 Invalidate();
             }
 
@@ -476,6 +637,16 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios
                         && posiciones.TryGetValue(conexion.DestinoId, out PointF destinoConexion))
                     {
                         graphics.DrawLine(lapizConexion, origen, destinoConexion);
+                    }
+                }
+
+                using Pen lapizRuta = new(Color.Crimson, 4f);
+                for (int indice = 0; indice < _ruta.Count - 1; indice++)
+                {
+                    if (posiciones.TryGetValue(_ruta[indice].Id, out PointF origen)
+                        && posiciones.TryGetValue(_ruta[indice + 1].Id, out PointF destinoRuta))
+                    {
+                        graphics.DrawLine(lapizRuta, origen, destinoRuta);
                     }
                 }
 
