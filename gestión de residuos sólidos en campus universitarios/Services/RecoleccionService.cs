@@ -62,16 +62,47 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Services
                 .Select(p => p.Punto)
                 .ToArray();
 
-            Ruta rutaOptimizada = _estrategiaOptimizada.Calcular(
+            campus.ParametrosOperacion.Validar();
+
+            foreach (PuntoRecoleccion punto in puntosSeleccionados)
+            {
+                punto.ValidarDatosOperativos();
+            }
+
+            Ruta rutaOptimizadaSinCapacidad = _estrategiaOptimizada.Calcular(
                 grafo,
                 campus.Puntos,
                 centros[0],
                 puntosSeleccionados);
-            Ruta rutaBase = _estrategiaBase.Calcular(
+            Ruta rutaBaseSinCapacidad = _estrategiaBase.Calcular(
                 grafo,
                 campus.Puntos,
                 centros[0],
                 puntosSeleccionados);
+            Dijkstra dijkstra = new();
+            Ruta rutaOptimizada = ConstructorRuta.CrearConCapacidad(
+                grafo,
+                campus.Puntos,
+                centros[0],
+                rutaOptimizadaSinCapacidad.PuntosVisitados,
+                campus.ParametrosOperacion.CapacidadVehiculoLitros,
+                dijkstra);
+            Ruta rutaBase = ConstructorRuta.CrearConCapacidad(
+                grafo,
+                campus.Puntos,
+                centros[0],
+                rutaBaseSinCapacidad.PuntosVisitados,
+                campus.ParametrosOperacion.CapacidadVehiculoLitros,
+                dijkstra);
+            double kilosEstimados = _indicadores.EstimarKilos(puntosSeleccionados);
+            double volumenEstimado = _indicadores.EstimarVolumenActualLitros(puntosSeleccionados);
+            double duracionDesplazamiento = _indicadores.CalcularDuracionDesplazamientoMinutos(
+                rutaOptimizada.DistanciaTotal,
+                campus.ParametrosOperacion.VelocidadMediaKmHora);
+            double duracionServicio = puntosSeleccionados.Length * campus.ParametrosOperacion.MinutosServicioPorContenedor
+                + Math.Max(0, rutaOptimizada.PuntosRecorrido.Count(p => p.Id == centros[0].Id) - 2)
+                * campus.ParametrosOperacion.MinutosDescarga;
+            double duracionTotal = duracionDesplazamiento + duracionServicio;
 
             return new ResultadoRecoleccion
             {
@@ -79,7 +110,23 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Services
                 RutaOptimizada = rutaOptimizada,
                 RutaBase = rutaBase,
                 AhorroPorcentual = _indicadores.CalcularAhorroPorcentual(rutaBase, rutaOptimizada),
-                KilosEstimados = _indicadores.EstimarKilos(puntosSeleccionados)
+                KilosEstimados = kilosEstimados,
+                VolumenEstimadoLitros = volumenEstimado,
+                VolumenGeneradoEstimadoLitros = _indicadores.EstimarVolumenGeneradoLitros(puntosSeleccionados, campus.ParametrosResiduos),
+                UtilizacionVehiculoPct = _indicadores.CalcularUtilizacionVehiculoPct(
+                    volumenEstimado,
+                    campus.ParametrosOperacion.CapacidadVehiculoLitros,
+                    Math.Max(1, rutaOptimizada.PuntosRecorrido.Count(p => p.Id == centros[0].Id))),
+                DuracionDesplazamientoMinutos = duracionDesplazamiento,
+                DuracionServicioMinutos = duracionServicio,
+                DuracionTotalMinutos = duracionTotal,
+                CostoEstimado = _indicadores.CalcularCosto(rutaOptimizada.DistanciaTotal, duracionTotal, campus.ParametrosOperacion),
+                KilosAprovechables = _indicadores.EstimarKilosAprovechables(puntosSeleccionados, campus.ParametrosResiduos),
+                CO2eEvitadoKg = _indicadores.EstimarCO2eEvitadoKg(puntosSeleccionados, campus.ParametrosResiduos),
+                DiasHastaUmbralEstimados = _indicadores.EstimarDiasHastaUmbral(
+                    campus.Puntos.Where(p => p.Tipo == TipoPunto.Recoleccion),
+                    campus.ParametrosResiduos,
+                    campus.ParametrosOperacion.UmbralProgramacionPct)
             };
         }
     }

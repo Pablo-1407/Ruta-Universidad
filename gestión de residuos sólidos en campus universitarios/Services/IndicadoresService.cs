@@ -25,5 +25,182 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Services
                 .Where(p => p.Tipo == TipoPunto.Recoleccion)
                 .Sum(p => p.GeneracionKgDia * p.DiasSinRecoleccion);
         }
+
+        public double EstimarVolumenActualLitros(IEnumerable<PuntoRecoleccion> puntos)
+        {
+            ArgumentNullException.ThrowIfNull(puntos);
+            PuntoRecoleccion[] puntosRecoleccion = puntos
+                .Where(p => p.Tipo == TipoPunto.Recoleccion)
+                .ToArray();
+
+            foreach (PuntoRecoleccion punto in puntosRecoleccion)
+            {
+                punto.ValidarDatosOperativos();
+            }
+
+            return puntosRecoleccion.Sum(p => p.CapacidadLitros * p.NivelLlenadoPct / 100);
+        }
+
+        public double EstimarVolumenGeneradoLitros(IEnumerable<PuntoRecoleccion> puntos, IEnumerable<ParametrosResiduo> parametrosResiduos)
+        {
+            ArgumentNullException.ThrowIfNull(puntos);
+            ArgumentNullException.ThrowIfNull(parametrosResiduos);
+
+            Dictionary<TipoResiduo, ParametrosResiduo> parametros = parametrosResiduos
+                .Where(p => p.Tipo != TipoResiduo.SinClasificar)
+                .GroupBy(p => p.Tipo)
+                .ToDictionary(g => g.Key, g =>
+                {
+                    if (g.Count() > 1)
+                    {
+                        throw new InvalidOperationException($"Hay parámetros duplicados para el residuo {g.Key}.");
+                    }
+
+                    return g.Single();
+                });
+
+            double volumen = 0;
+            foreach (PuntoRecoleccion punto in puntos.Where(p => p.Tipo == TipoPunto.Recoleccion))
+            {
+                punto.ValidarDatosOperativos();
+                if (!parametros.TryGetValue(punto.TipoResiduo, out ParametrosResiduo? parametrosResiduo))
+                {
+                    throw new InvalidOperationException($"Faltan parámetros documentados para el residuo {punto.TipoResiduo}.");
+                }
+
+                if (!double.IsFinite(parametrosResiduo.DensidadKgPorLitro)
+                    || parametrosResiduo.DensidadKgPorLitro <= 0
+                    || string.IsNullOrWhiteSpace(parametrosResiduo.FuenteDensidad))
+                {
+                    throw new InvalidOperationException($"La densidad del residuo {punto.TipoResiduo} debe ser positiva e incluir una fuente.");
+                }
+
+                double kilos = punto.GeneracionKgDia * punto.DiasSinRecoleccion;
+                volumen += kilos / parametrosResiduo.DensidadKgPorLitro;
+            }
+
+            return volumen;
+        }
+
+        public double EstimarKilosAprovechables(IEnumerable<PuntoRecoleccion> puntos, IEnumerable<ParametrosResiduo> parametrosResiduos)
+        {
+            ArgumentNullException.ThrowIfNull(puntos);
+            Dictionary<TipoResiduo, ParametrosResiduo> parametros = ObtenerParametros(puntos, parametrosResiduos);
+
+            return puntos
+                .Where(p => p.Tipo == TipoPunto.Recoleccion)
+                .Sum(p => p.GeneracionKgDia * p.DiasSinRecoleccion
+                    * ValidarParametrosSostenibilidad(parametros, p.TipoResiduo).PorcentajeAprovechablePct / 100);
+        }
+
+        public double EstimarCO2eEvitadoKg(IEnumerable<PuntoRecoleccion> puntos, IEnumerable<ParametrosResiduo> parametrosResiduos)
+        {
+            ArgumentNullException.ThrowIfNull(puntos);
+            Dictionary<TipoResiduo, ParametrosResiduo> parametros = ObtenerParametros(puntos, parametrosResiduos);
+
+            return puntos
+                .Where(p => p.Tipo == TipoPunto.Recoleccion)
+                .Sum(p => p.GeneracionKgDia * p.DiasSinRecoleccion
+                    * ValidarParametrosSostenibilidad(parametros, p.TipoResiduo).PorcentajeAprovechablePct / 100
+                    * ValidarParametrosSostenibilidad(parametros, p.TipoResiduo).FactorCO2eEvitadoKgPorKg);
+        }
+
+        public double? EstimarDiasHastaUmbral(
+            IEnumerable<PuntoRecoleccion> puntos,
+            IEnumerable<ParametrosResiduo> parametrosResiduos,
+            double umbralPct)
+        {
+            ArgumentNullException.ThrowIfNull(puntos);
+            if (!double.IsFinite(umbralPct) || umbralPct is <= 0 or > 100)
+            {
+                throw new ArgumentOutOfRangeException(nameof(umbralPct));
+            }
+
+            Dictionary<TipoResiduo, ParametrosResiduo> parametros = ObtenerParametros(puntos, parametrosResiduos);
+            double[] dias = puntos
+                .Where(p => p.Tipo == TipoPunto.Recoleccion)
+                .Select(p =>
+                {
+                    p.ValidarDatosOperativos();
+                    if (p.NivelLlenadoPct >= umbralPct)
+                    {
+                        return 0;
+                    }
+
+                    double densidad = ValidarParametrosSostenibilidad(parametros, p.TipoResiduo).DensidadKgPorLitro;
+                    double tasaPctDia = p.GeneracionKgDia / densidad / p.CapacidadLitros * 100;
+                    return tasaPctDia > 0 ? (umbralPct - p.NivelLlenadoPct) / tasaPctDia : double.PositiveInfinity;
+                })
+                .ToArray();
+
+            if (dias.Length == 0)
+            {
+                return null;
+            }
+
+            double minimo = dias.Min();
+            return double.IsFinite(minimo) ? minimo : null;
+        }
+
+        public double CalcularUtilizacionVehiculoPct(double volumenLitros, double capacidadLitros, int viajes)
+        {
+            if (!double.IsFinite(volumenLitros) || volumenLitros < 0
+                || !double.IsFinite(capacidadLitros) || capacidadLitros <= 0
+                || viajes <= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(volumenLitros));
+            }
+
+            return volumenLitros / (capacidadLitros * viajes) * 100;
+        }
+
+        public double CalcularDuracionDesplazamientoMinutos(double distanciaMetros, double velocidadKmHora)
+        {
+            if (!double.IsFinite(distanciaMetros) || distanciaMetros < 0
+                || !double.IsFinite(velocidadKmHora) || velocidadKmHora <= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(distanciaMetros));
+            }
+
+            return distanciaMetros / 1000 / velocidadKmHora * 60;
+        }
+
+        public double CalcularCosto(double distanciaMetros, double duracionMinutos, ParametrosOperacion parametros)
+        {
+            ArgumentNullException.ThrowIfNull(parametros);
+            parametros.Validar();
+            return distanciaMetros / 1000 * parametros.CostoPorKm
+                + duracionMinutos / 60 * parametros.CostoPorHora;
+        }
+
+        private static Dictionary<TipoResiduo, ParametrosResiduo> ObtenerParametros(
+            IEnumerable<PuntoRecoleccion> puntos,
+            IEnumerable<ParametrosResiduo> parametrosResiduos)
+        {
+            ArgumentNullException.ThrowIfNull(parametrosResiduos);
+            HashSet<TipoResiduo> tiposNecesarios = puntos
+                .Where(p => p.Tipo == TipoPunto.Recoleccion)
+                .Select(p => p.TipoResiduo)
+                .ToHashSet();
+            return parametrosResiduos
+                .Where(p => tiposNecesarios.Contains(p.Tipo))
+                .GroupBy(p => p.Tipo)
+                .ToDictionary(g => g.Key, g => g.Count() == 1
+                    ? g.Single()
+                    : throw new InvalidOperationException($"Hay parámetros duplicados para el residuo {g.Key}."));
+        }
+
+        private static ParametrosResiduo ValidarParametrosSostenibilidad(
+            IReadOnlyDictionary<TipoResiduo, ParametrosResiduo> parametros,
+            TipoResiduo tipo)
+        {
+            if (!parametros.TryGetValue(tipo, out ParametrosResiduo? parametro))
+            {
+                throw new InvalidOperationException($"Faltan parámetros documentados para el residuo {tipo}.");
+            }
+
+            parametro.Validar();
+            return parametro;
+        }
     }
 }

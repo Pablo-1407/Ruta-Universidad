@@ -6,7 +6,8 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Data
 {
     internal sealed class TxtCampusRepository : IPuntoRepository
     {
-        private const string Cabecera = "RUTAS_RESIDUOS_CAMPUS\t1";
+        private const string CabeceraV1 = "RUTAS_RESIDUOS_CAMPUS\t1";
+        private const string CabeceraV2 = "RUTAS_RESIDUOS_CAMPUS\t2";
 
         public CampusData Cargar(string rutaArchivo)
         {
@@ -14,11 +15,12 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Data
 
             string rutaCompleta = Path.GetFullPath(rutaArchivo);
             string[] lineas = File.ReadAllLines(rutaCompleta);
-            if (lineas.Length == 0 || lineas[0] != Cabecera)
+            if (lineas.Length == 0 || (lineas[0] != CabeceraV1 && lineas[0] != CabeceraV2))
             {
                 throw new InvalidDataException("El archivo no tiene el formato de campus esperado.");
             }
 
+            bool versionDos = lineas[0] == CabeceraV2;
             CampusData campus = new();
             string? nombreImagen = null;
             Seccion seccion = Seccion.Metadatos;
@@ -47,6 +49,30 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Data
                     continue;
                 }
 
+                if (linea == "PARAMETROS_OPERACION")
+                {
+                    seccion = Seccion.ParametrosOperacion;
+                    continue;
+                }
+
+                if (linea == "PARAMETROS_RESIDUOS")
+                {
+                    seccion = Seccion.ParametrosResiduos;
+                    continue;
+                }
+
+                if (linea == "PROGRAMACIONES")
+                {
+                    seccion = Seccion.Programaciones;
+                    continue;
+                }
+
+                if (linea == "HISTORIAL")
+                {
+                    seccion = Seccion.Historial;
+                    continue;
+                }
+
                 string[] campos = linea.Split('\t');
                 if (seccion == Seccion.Metadatos && campos.Length == 2 && campos[0] == "IMAGEN")
                 {
@@ -54,21 +80,9 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Data
                     continue;
                 }
 
-                if (seccion == Seccion.Puntos && campos[0] == "P" && campos.Length is 9 or 10)
+                if (seccion == Seccion.Puntos && campos[0] == "P")
                 {
-                    int desplazamiento = campos.Length == 10 ? 1 : 0;
-                    campus.Puntos.Add(new PuntoRecoleccion
-                    {
-                        Id = LeerEntero(campos[1], indice + 1),
-                        Tipo = desplazamiento == 0 ? TipoPunto.Recoleccion : LeerTipo(campos[2], indice + 1),
-                        Nombre = Desescapar(campos[2 + desplazamiento], indice + 1),
-                        X = LeerDecimal(campos[3 + desplazamiento], indice + 1),
-                        Y = LeerDecimal(campos[4 + desplazamiento], indice + 1),
-                        NivelLlenadoPct = LeerDecimal(campos[5 + desplazamiento], indice + 1),
-                        GeneracionKgDia = LeerDecimal(campos[6 + desplazamiento], indice + 1),
-                        DiasSinRecoleccion = LeerEntero(campos[7 + desplazamiento], indice + 1),
-                        PesoZona = LeerDecimal(campos[8 + desplazamiento], indice + 1)
-                    });
+                    campus.Puntos.Add(LeerPunto(campos, versionDos, indice + 1));
                     continue;
                 }
 
@@ -83,12 +97,85 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Data
                     continue;
                 }
 
+                if (seccion == Seccion.ParametrosOperacion && campos.Length == 8 && campos[0] == "O")
+                {
+                    campus.ParametrosOperacion = new ParametrosOperacion
+                    {
+                        CapacidadVehiculoLitros = LeerDecimal(campos[1], indice + 1),
+                        VelocidadMediaKmHora = LeerDecimal(campos[2], indice + 1),
+                        CostoPorKm = LeerDecimal(campos[3], indice + 1),
+                        CostoPorHora = LeerDecimal(campos[4], indice + 1),
+                        MinutosServicioPorContenedor = LeerDecimal(campos[5], indice + 1),
+                        MinutosDescarga = LeerDecimal(campos[6], indice + 1),
+                        UmbralProgramacionPct = LeerDecimal(campos[7], indice + 1)
+                    };
+                    continue;
+                }
+
+                if (seccion == Seccion.ParametrosResiduos && campos.Length == 8 && campos[0] == "R")
+                {
+                    campus.ParametrosResiduos.Add(new ParametrosResiduo
+                    {
+                        Tipo = LeerTipoResiduo(campos[1], indice + 1),
+                        DensidadKgPorLitro = LeerDecimal(campos[2], indice + 1),
+                        PorcentajeAprovechablePct = LeerDecimal(campos[3], indice + 1),
+                        FactorCO2eEvitadoKgPorKg = LeerDecimal(campos[4], indice + 1),
+                        FuenteDensidad = Desescapar(campos[5], indice + 1),
+                        FuenteAprovechamiento = Desescapar(campos[6], indice + 1),
+                        FuenteEmisiones = Desescapar(campos[7], indice + 1)
+                    });
+                    continue;
+                }
+
+                if (seccion == Seccion.Programaciones && campos.Length == 8 && campos[0] == "S")
+                {
+                    campus.Programaciones.Add(new ProgramacionRecoleccion
+                    {
+                        Id = LeerEntero(campos[1], indice + 1),
+                        FechaProgramada = LeerFecha(campos[2], indice + 1),
+                        CentroAcopioId = LeerEntero(campos[3], indice + 1),
+                        PuntosIds = LeerIds(campos[4], indice + 1),
+                        VolumenEstimadoLitros = LeerDecimal(campos[5], indice + 1),
+                        Estado = LeerEstadoProgramacion(campos[6], indice + 1),
+                        FechaCompletada = string.IsNullOrEmpty(campos[7]) ? null : LeerFecha(campos[7], indice + 1)
+                    });
+                    continue;
+                }
+
+                if (seccion == Seccion.Historial && campos.Length == 12 && campos[0] == "H")
+                {
+                    campus.HistorialRecolecciones.Add(new RegistroHistorialRecoleccion
+                    {
+                        Id = LeerEntero(campos[1], indice + 1),
+                        FechaCompletada = LeerFecha(campos[2], indice + 1),
+                        CentroAcopioId = LeerEntero(campos[3], indice + 1),
+                        PuntosIds = LeerIds(campos[4], indice + 1),
+                        VolumenLitros = LeerDecimal(campos[5], indice + 1),
+                        KilosRecolectados = LeerDecimal(campos[6], indice + 1),
+                        DistanciaMetros = LeerDecimal(campos[7], indice + 1),
+                        DuracionMinutos = LeerDecimal(campos[8], indice + 1),
+                        Costo = LeerDecimal(campos[9], indice + 1),
+                        KilosAprovechados = LeerDecimal(campos[10], indice + 1),
+                        CO2eEvitadoKg = LeerDecimal(campos[11], indice + 1)
+                    });
+                    continue;
+                }
+
                 throw new InvalidDataException($"Formato no válido en la línea {indice + 1}.");
             }
 
             if (!tieneSeccionPuntos || !tieneSeccionConexiones)
             {
                 throw new InvalidDataException("El archivo debe contener las secciones PUNTOS y CONEXIONES.");
+            }
+
+            if (!versionDos && campus.Puntos.Any(p => p.Tipo == TipoPunto.Recoleccion))
+            {
+                foreach (PuntoRecoleccion punto in campus.Puntos.Where(p => p.Tipo == TipoPunto.Recoleccion))
+                {
+                    punto.TipoResiduo = TipoResiduo.SinClasificar;
+                    punto.CapacidadLitros = 0;
+                }
             }
 
             if (!string.IsNullOrWhiteSpace(nombreImagen))
@@ -134,7 +221,7 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Data
 
             List<string> lineas =
             [
-                Cabecera,
+                CabeceraV2,
                 $"IMAGEN\t{(nombreImagen is null ? string.Empty : Escapar(nombreImagen))}",
                 "PUNTOS"
             ];
@@ -149,6 +236,8 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Data
                     Escapar(punto.Nombre),
                     Formatear(punto.X),
                     Formatear(punto.Y),
+                    FormatearTipoResiduo(punto.TipoResiduo),
+                    Formatear(punto.CapacidadLitros),
                     Formatear(punto.NivelLlenadoPct),
                     Formatear(punto.GeneracionKgDia),
                     Formatear(punto.DiasSinRecoleccion),
@@ -168,7 +257,132 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Data
                 }));
             }
 
+            lineas.Add("PARAMETROS_OPERACION");
+            ParametrosOperacion operacion = campus.ParametrosOperacion;
+            lineas.Add(string.Join('\t', new[]
+            {
+                "O",
+                Formatear(operacion.CapacidadVehiculoLitros),
+                Formatear(operacion.VelocidadMediaKmHora),
+                Formatear(operacion.CostoPorKm),
+                Formatear(operacion.CostoPorHora),
+                Formatear(operacion.MinutosServicioPorContenedor),
+                Formatear(operacion.MinutosDescarga),
+                Formatear(operacion.UmbralProgramacionPct)
+            }));
+
+            lineas.Add("PARAMETROS_RESIDUOS");
+            foreach (ParametrosResiduo parametros in campus.ParametrosResiduos)
+            {
+                lineas.Add(string.Join('\t', new[]
+                {
+                    "R",
+                    FormatearTipoResiduo(parametros.Tipo),
+                    Formatear(parametros.DensidadKgPorLitro),
+                    Formatear(parametros.PorcentajeAprovechablePct),
+                    Formatear(parametros.FactorCO2eEvitadoKgPorKg),
+                    Escapar(parametros.FuenteDensidad),
+                    Escapar(parametros.FuenteAprovechamiento),
+                    Escapar(parametros.FuenteEmisiones)
+                }));
+            }
+
+            lineas.Add("PROGRAMACIONES");
+            foreach (ProgramacionRecoleccion programacion in campus.Programaciones)
+            {
+                lineas.Add(string.Join('\t', new[]
+                {
+                    "S",
+                    Formatear(programacion.Id),
+                    Formatear(programacion.FechaProgramada),
+                    Formatear(programacion.CentroAcopioId),
+                    FormatearIds(programacion.PuntosIds),
+                    Formatear(programacion.VolumenEstimadoLitros),
+                    FormatearEstado(programacion.Estado),
+                    programacion.FechaCompletada is null ? string.Empty : Formatear(programacion.FechaCompletada.Value)
+                }));
+            }
+
+            lineas.Add("HISTORIAL");
+            foreach (RegistroHistorialRecoleccion registro in campus.HistorialRecolecciones)
+            {
+                lineas.Add(string.Join('\t', new[]
+                {
+                    "H",
+                    Formatear(registro.Id),
+                    Formatear(registro.FechaCompletada),
+                    Formatear(registro.CentroAcopioId),
+                    FormatearIds(registro.PuntosIds),
+                    Formatear(registro.VolumenLitros),
+                    Formatear(registro.KilosRecolectados),
+                    Formatear(registro.DistanciaMetros),
+                    Formatear(registro.DuracionMinutos),
+                    Formatear(registro.Costo),
+                    Formatear(registro.KilosAprovechados),
+                    Formatear(registro.CO2eEvitadoKg)
+                }));
+            }
+
             File.WriteAllLines(rutaCompleta, lineas, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        }
+
+        private static PuntoRecoleccion LeerPunto(string[] campos, bool versionDos, int numeroLinea)
+        {
+            if (versionDos)
+            {
+                if (campos.Length != 12)
+                {
+                    throw new InvalidDataException($"Formato de punto no válido en la línea {numeroLinea}.");
+                }
+
+                return new PuntoRecoleccion
+                {
+                    Id = LeerEntero(campos[1], numeroLinea),
+                    Tipo = LeerTipo(campos[2], numeroLinea),
+                    Nombre = Desescapar(campos[3], numeroLinea),
+                    X = LeerDecimal(campos[4], numeroLinea),
+                    Y = LeerDecimal(campos[5], numeroLinea),
+                    TipoResiduo = LeerTipoResiduo(campos[6], numeroLinea),
+                    CapacidadLitros = LeerDecimal(campos[7], numeroLinea),
+                    NivelLlenadoPct = LeerDecimal(campos[8], numeroLinea),
+                    GeneracionKgDia = LeerDecimal(campos[9], numeroLinea),
+                    DiasSinRecoleccion = LeerEntero(campos[10], numeroLinea),
+                    PesoZona = LeerDecimal(campos[11], numeroLinea)
+                };
+            }
+
+            if (campos.Length == 10)
+            {
+                return new PuntoRecoleccion
+                {
+                    Id = LeerEntero(campos[1], numeroLinea),
+                    Tipo = LeerTipo(campos[2], numeroLinea),
+                    Nombre = Desescapar(campos[3], numeroLinea),
+                    X = LeerDecimal(campos[4], numeroLinea),
+                    Y = LeerDecimal(campos[5], numeroLinea),
+                    NivelLlenadoPct = LeerDecimal(campos[6], numeroLinea),
+                    GeneracionKgDia = LeerDecimal(campos[7], numeroLinea),
+                    DiasSinRecoleccion = LeerEntero(campos[8], numeroLinea),
+                    PesoZona = LeerDecimal(campos[9], numeroLinea)
+                };
+            }
+
+            if (campos.Length == 9)
+            {
+                return new PuntoRecoleccion
+                {
+                    Id = LeerEntero(campos[1], numeroLinea),
+                    Nombre = Desescapar(campos[2], numeroLinea),
+                    X = LeerDecimal(campos[3], numeroLinea),
+                    Y = LeerDecimal(campos[4], numeroLinea),
+                    NivelLlenadoPct = LeerDecimal(campos[5], numeroLinea),
+                    GeneracionKgDia = LeerDecimal(campos[6], numeroLinea),
+                    DiasSinRecoleccion = LeerEntero(campos[7], numeroLinea),
+                    PesoZona = LeerDecimal(campos[8], numeroLinea)
+                };
+            }
+
+            throw new InvalidDataException($"Formato de punto no válido en la línea {numeroLinea}.");
         }
 
         private static TipoPunto LeerTipo(string valor, int numeroLinea) => valor switch
@@ -184,6 +398,64 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Data
             TipoPunto.CentroAcopio => "ACOPIO",
             _ => throw new InvalidDataException("Tipo de punto no válido.")
         };
+
+        private static TipoResiduo LeerTipoResiduo(string valor, int numeroLinea)
+        {
+            if (Enum.TryParse(valor, ignoreCase: false, out TipoResiduo tipo) && Enum.IsDefined(tipo))
+            {
+                return tipo;
+            }
+
+            throw new InvalidDataException($"Tipo de residuo no válido en la línea {numeroLinea}.");
+        }
+
+        private static string FormatearTipoResiduo(TipoResiduo tipo) => Enum.IsDefined(tipo)
+            ? tipo.ToString()
+            : throw new InvalidDataException("Tipo de residuo no válido.");
+
+        private static EstadoProgramacion LeerEstadoProgramacion(string valor, int numeroLinea)
+        {
+            if (Enum.TryParse(valor, ignoreCase: false, out EstadoProgramacion estado) && Enum.IsDefined(estado))
+            {
+                return estado;
+            }
+
+            throw new InvalidDataException($"Estado de programación no válido en la línea {numeroLinea}.");
+        }
+
+        private static string FormatearEstado(EstadoProgramacion estado) => Enum.IsDefined(estado)
+            ? estado.ToString()
+            : throw new InvalidDataException("Estado de programación no válido.");
+
+        private static List<int> LeerIds(string valor, int numeroLinea)
+        {
+            if (string.IsNullOrEmpty(valor))
+            {
+                return [];
+            }
+
+            List<int> ids = [];
+            foreach (string id in valor.Split(','))
+            {
+                ids.Add(LeerEntero(id, numeroLinea));
+            }
+
+            return ids;
+        }
+
+        private static DateTimeOffset LeerFecha(string valor, int numeroLinea)
+        {
+            if (DateTimeOffset.TryParseExact(valor, "O", CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out DateTimeOffset fecha))
+            {
+                return fecha;
+            }
+
+            throw new InvalidDataException($"Fecha no válida en la línea {numeroLinea}.");
+        }
+
+        private static string FormatearIds(IEnumerable<int> ids) => string.Join(',', ids.Select(Formatear));
+
+        private static string Formatear(DateTimeOffset valor) => valor.ToString("O", CultureInfo.InvariantCulture);
 
         private static string Escapar(string valor) => valor
             .Replace("\\", "\\\\", StringComparison.Ordinal)
@@ -250,7 +522,11 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Data
         {
             Metadatos,
             Puntos,
-            Conexiones
+            Conexiones,
+            ParametrosOperacion,
+            ParametrosResiduos,
+            Programaciones,
+            Historial
         }
     }
 }
