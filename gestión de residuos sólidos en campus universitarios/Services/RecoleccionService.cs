@@ -46,6 +46,46 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Services
                 throw new ArgumentOutOfRangeException(nameof(cantidadPuntos), "La cantidad debe estar entre 1 y el total de puntos de recolección.");
             }
 
+            return GenerarRuta(campus, priorizados, centros[0], priorizados.Take(cantidadPuntos).Select(p => p.Punto).ToArray());
+        }
+
+        public ResultadoRecoleccion GenerarRuta(CampusData campus, IReadOnlyCollection<int> puntosIds)
+        {
+            ArgumentNullException.ThrowIfNull(campus);
+            ArgumentNullException.ThrowIfNull(puntosIds);
+            if (puntosIds.Count == 0 || puntosIds.Distinct().Count() != puntosIds.Count)
+            {
+                throw new ArgumentException("Selecciona identificadores de punto válidos y no duplicados.", nameof(puntosIds));
+            }
+
+            PuntoRecoleccion[] centros = campus.Puntos.Where(p => p.Tipo == TipoPunto.CentroAcopio).ToArray();
+            if (centros.Length != 1)
+            {
+                throw new InvalidOperationException("Registra exactamente un centro de acopio antes de generar la ruta.");
+            }
+
+            IReadOnlyList<PuntoPriorizado> priorizados = _estrategiaPriorizacion.Priorizar(campus.Puntos);
+            Dictionary<int, PuntoRecoleccion> puntosPorId = campus.Puntos
+                .Where(p => p.Tipo == TipoPunto.Recoleccion)
+                .ToDictionary(p => p.Id);
+            if (puntosIds.Any(id => !puntosPorId.ContainsKey(id)))
+            {
+                throw new ArgumentException("La selección contiene puntos inexistentes o no recolectables.", nameof(puntosIds));
+            }
+
+            PuntoRecoleccion[] seleccionados = priorizados
+                .Where(p => puntosIds.Contains(p.Punto.Id))
+                .Select(p => p.Punto)
+                .ToArray();
+            return GenerarRuta(campus, priorizados, centros[0], seleccionados);
+        }
+
+        private ResultadoRecoleccion GenerarRuta(
+            CampusData campus,
+            IReadOnlyList<PuntoPriorizado> priorizados,
+            PuntoRecoleccion centro,
+            PuntoRecoleccion[] puntosSeleccionados)
+        {
             GrafoCampus grafo = new();
             foreach (PuntoRecoleccion punto in campus.Puntos)
             {
@@ -57,11 +97,6 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Services
                 grafo.AgregarArista(conexion.OrigenId, conexion.DestinoId, conexion.Metros);
             }
 
-            PuntoRecoleccion[] puntosSeleccionados = priorizados
-                .Take(cantidadPuntos)
-                .Select(p => p.Punto)
-                .ToArray();
-
             campus.ParametrosOperacion.Validar();
 
             foreach (PuntoRecoleccion punto in puntosSeleccionados)
@@ -72,25 +107,25 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Services
             Ruta rutaOptimizadaSinCapacidad = _estrategiaOptimizada.Calcular(
                 grafo,
                 campus.Puntos,
-                centros[0],
+                centro,
                 puntosSeleccionados);
             Ruta rutaBaseSinCapacidad = _estrategiaBase.Calcular(
                 grafo,
                 campus.Puntos,
-                centros[0],
+                centro,
                 puntosSeleccionados);
             Dijkstra dijkstra = new();
             Ruta rutaOptimizada = ConstructorRuta.CrearConCapacidad(
                 grafo,
                 campus.Puntos,
-                centros[0],
+                centro,
                 rutaOptimizadaSinCapacidad.PuntosVisitados,
                 campus.ParametrosOperacion.CapacidadVehiculoLitros,
                 dijkstra);
             Ruta rutaBase = ConstructorRuta.CrearConCapacidad(
                 grafo,
                 campus.Puntos,
-                centros[0],
+                centro,
                 rutaBaseSinCapacidad.PuntosVisitados,
                 campus.ParametrosOperacion.CapacidadVehiculoLitros,
                 dijkstra);
@@ -100,7 +135,7 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Services
                 rutaOptimizada.DistanciaTotal,
                 campus.ParametrosOperacion.VelocidadMediaKmHora);
             double duracionServicio = puntosSeleccionados.Length * campus.ParametrosOperacion.MinutosServicioPorContenedor
-                + Math.Max(0, rutaOptimizada.PuntosRecorrido.Count(p => p.Id == centros[0].Id) - 2)
+                + Math.Max(0, rutaOptimizada.PuntosRecorrido.Count(p => p.Id == centro.Id) - 2)
                 * campus.ParametrosOperacion.MinutosDescarga;
             double duracionTotal = duracionDesplazamiento + duracionServicio;
 
@@ -112,22 +147,37 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Services
                 AhorroPorcentual = _indicadores.CalcularAhorroPorcentual(rutaBase, rutaOptimizada),
                 KilosEstimados = kilosEstimados,
                 VolumenEstimadoLitros = volumenEstimado,
-                VolumenGeneradoEstimadoLitros = _indicadores.EstimarVolumenGeneradoLitros(puntosSeleccionados, campus.ParametrosResiduos),
+                VolumenGeneradoEstimadoLitrosDisponible = IntentarCalcular(
+                    () => _indicadores.EstimarVolumenGeneradoLitros(puntosSeleccionados, campus.ParametrosResiduos)),
                 UtilizacionVehiculoPct = _indicadores.CalcularUtilizacionVehiculoPct(
                     volumenEstimado,
                     campus.ParametrosOperacion.CapacidadVehiculoLitros,
-                    Math.Max(1, rutaOptimizada.PuntosRecorrido.Count(p => p.Id == centros[0].Id))),
+                    Math.Max(1, rutaOptimizada.PuntosRecorrido.Count(p => p.Id == centro.Id))),
                 DuracionDesplazamientoMinutos = duracionDesplazamiento,
                 DuracionServicioMinutos = duracionServicio,
                 DuracionTotalMinutos = duracionTotal,
                 CostoEstimado = _indicadores.CalcularCosto(rutaOptimizada.DistanciaTotal, duracionTotal, campus.ParametrosOperacion),
-                KilosAprovechables = _indicadores.EstimarKilosAprovechables(puntosSeleccionados, campus.ParametrosResiduos),
-                CO2eEvitadoKg = _indicadores.EstimarCO2eEvitadoKg(puntosSeleccionados, campus.ParametrosResiduos),
+                KilosAprovechablesDisponibles = IntentarCalcular(
+                    () => _indicadores.EstimarKilosAprovechables(puntosSeleccionados, campus.ParametrosResiduos)),
+                CO2eEvitadoKgDisponible = IntentarCalcular(
+                    () => _indicadores.EstimarCO2eEvitadoKg(puntosSeleccionados, campus.ParametrosResiduos)),
                 DiasHastaUmbralEstimados = _indicadores.EstimarDiasHastaUmbral(
                     campus.Puntos.Where(p => p.Tipo == TipoPunto.Recoleccion),
                     campus.ParametrosResiduos,
                     campus.ParametrosOperacion.UmbralProgramacionPct)
             };
+        }
+
+        private static double? IntentarCalcular(Func<double> calculo)
+        {
+            try
+            {
+                return calculo();
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
+            {
+                return null;
+            }
         }
     }
 }

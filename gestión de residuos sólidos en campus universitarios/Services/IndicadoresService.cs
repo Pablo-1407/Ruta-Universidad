@@ -90,7 +90,7 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Services
             return puntos
                 .Where(p => p.Tipo == TipoPunto.Recoleccion)
                 .Sum(p => p.GeneracionKgDia * p.DiasSinRecoleccion
-                    * ValidarParametrosSostenibilidad(parametros, p.TipoResiduo).PorcentajeAprovechablePct / 100);
+                    * ValidarParametrosAprovechamiento(parametros, p.TipoResiduo).PorcentajeAprovechablePct / 100);
         }
 
         public double EstimarCO2eEvitadoKg(IEnumerable<PuntoRecoleccion> puntos, IEnumerable<ParametrosResiduo> parametrosResiduos)
@@ -101,8 +101,8 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Services
             return puntos
                 .Where(p => p.Tipo == TipoPunto.Recoleccion)
                 .Sum(p => p.GeneracionKgDia * p.DiasSinRecoleccion
-                    * ValidarParametrosSostenibilidad(parametros, p.TipoResiduo).PorcentajeAprovechablePct / 100
-                    * ValidarParametrosSostenibilidad(parametros, p.TipoResiduo).FactorCO2eEvitadoKgPorKg);
+                    * ValidarParametrosEmisiones(parametros, p.TipoResiduo).PorcentajeAprovechablePct / 100
+                    * ValidarParametrosEmisiones(parametros, p.TipoResiduo).FactorCO2eEvitadoKgPorKg);
         }
 
         public double? EstimarDiasHastaUmbral(
@@ -111,29 +111,45 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Services
             double umbralPct)
         {
             ArgumentNullException.ThrowIfNull(puntos);
+            ArgumentNullException.ThrowIfNull(parametrosResiduos);
             if (!double.IsFinite(umbralPct) || umbralPct is <= 0 or > 100)
             {
                 throw new ArgumentOutOfRangeException(nameof(umbralPct));
             }
 
-            Dictionary<TipoResiduo, ParametrosResiduo> parametros = ObtenerParametros(puntos, parametrosResiduos);
-            double[] dias = puntos
+            PuntoRecoleccion[] puntosRecoleccion = puntos
                 .Where(p => p.Tipo == TipoPunto.Recoleccion)
-                .Select(p =>
-                {
-                    p.ValidarDatosOperativos();
-                    if (p.NivelLlenadoPct >= umbralPct)
-                    {
-                        return 0;
-                    }
-
-                    double densidad = ValidarParametrosSostenibilidad(parametros, p.TipoResiduo).DensidadKgPorLitro;
-                    double tasaPctDia = p.GeneracionKgDia / densidad / p.CapacidadLitros * 100;
-                    return tasaPctDia > 0 ? (umbralPct - p.NivelLlenadoPct) / tasaPctDia : double.PositiveInfinity;
-                })
                 .ToArray();
+            if (puntosRecoleccion.Length == 0
+                || puntosRecoleccion.Any(p => p.TipoResiduo == TipoResiduo.SinClasificar || p.CapacidadLitros <= 0))
+            {
+                return null;
+            }
 
-            if (dias.Length == 0)
+            foreach (PuntoRecoleccion punto in puntosRecoleccion)
+            {
+                punto.ValidarDatosOperativos();
+            }
+
+            double[] dias;
+            try
+            {
+                Dictionary<TipoResiduo, ParametrosResiduo> parametros = ObtenerParametros(puntosRecoleccion, parametrosResiduos);
+                dias = puntosRecoleccion
+                    .Select(p =>
+                    {
+                        if (p.NivelLlenadoPct >= umbralPct)
+                        {
+                            return 0;
+                        }
+
+                        double densidad = ValidarParametrosDensidad(parametros, p.TipoResiduo).DensidadKgPorLitro;
+                        double tasaPctDia = p.GeneracionKgDia / densidad / p.CapacidadLitros * 100;
+                        return tasaPctDia > 0 ? (umbralPct - p.NivelLlenadoPct) / tasaPctDia : double.PositiveInfinity;
+                    })
+                    .ToArray();
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
             {
                 return null;
             }
@@ -190,7 +206,34 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Services
                     : throw new InvalidOperationException($"Hay parámetros duplicados para el residuo {g.Key}."));
         }
 
-        private static ParametrosResiduo ValidarParametrosSostenibilidad(
+        private static ParametrosResiduo ValidarParametrosDensidad(
+            IReadOnlyDictionary<TipoResiduo, ParametrosResiduo> parametros,
+            TipoResiduo tipo)
+        {
+            ParametrosResiduo parametro = ObtenerParametro(parametros, tipo);
+            parametro.ValidarDensidad();
+            return parametro;
+        }
+
+        private static ParametrosResiduo ValidarParametrosAprovechamiento(
+            IReadOnlyDictionary<TipoResiduo, ParametrosResiduo> parametros,
+            TipoResiduo tipo)
+        {
+            ParametrosResiduo parametro = ObtenerParametro(parametros, tipo);
+            parametro.ValidarAprovechamiento();
+            return parametro;
+        }
+
+        private static ParametrosResiduo ValidarParametrosEmisiones(
+            IReadOnlyDictionary<TipoResiduo, ParametrosResiduo> parametros,
+            TipoResiduo tipo)
+        {
+            ParametrosResiduo parametro = ObtenerParametro(parametros, tipo);
+            parametro.ValidarEmisiones();
+            return parametro;
+        }
+
+        private static ParametrosResiduo ObtenerParametro(
             IReadOnlyDictionary<TipoResiduo, ParametrosResiduo> parametros,
             TipoResiduo tipo)
         {
@@ -199,7 +242,6 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Services
                 throw new InvalidOperationException($"Faltan parámetros documentados para el residuo {tipo}.");
             }
 
-            parametro.Validar();
             return parametro;
         }
     }

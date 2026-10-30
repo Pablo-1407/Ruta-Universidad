@@ -39,10 +39,13 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Views
             out ParametrosOperacion? parametrosActualizados,
             out IReadOnlyList<ParametrosResiduo>? residuosActualizados);
 
+        bool ConfirmarAccion(string mensaje);
+
         string? SeleccionarArchivoCampus(bool guardar);
         string? SeleccionarImagenMapa();
         void MostrarCampus(CampusData campus);
         void MostrarResultado(ResultadoRecoleccion resultado);
+        void EstablecerOcupado(bool ocupado, string mensaje);
         void MostrarMensaje(string mensaje, bool error = false);
     }
 }

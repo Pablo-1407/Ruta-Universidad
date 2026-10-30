@@ -187,6 +187,9 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Data
             return campus;
         }
 
+        public Task<CampusData> CargarAsync(string rutaArchivo, CancellationToken cancellationToken = default) =>
+            Task.Run(() => Cargar(rutaArchivo), cancellationToken);
+
         public void Guardar(CampusData campus, string rutaArchivo)
         {
             ArgumentNullException.ThrowIfNull(campus);
@@ -325,6 +328,13 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Data
 
             File.WriteAllLines(rutaCompleta, lineas, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         }
+
+        public Task GuardarAsync(CampusData campus, string rutaArchivo, CancellationToken cancellationToken = default) =>
+            Task.Run(() =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                Guardar(campus, rutaArchivo);
+            }, cancellationToken);
 
         private static PuntoRecoleccion LeerPunto(string[] campos, bool versionDos, int numeroLinea)
         {

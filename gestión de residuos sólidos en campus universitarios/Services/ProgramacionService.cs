@@ -22,6 +22,15 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Services
             foreach (PuntoRecoleccion punto in campus.Puntos.Where(p => p.Tipo == TipoPunto.Recoleccion))
             {
                 punto.ValidarDatosOperativos();
+                if (punto.NivelLlenadoPct >= campus.ParametrosOperacion.UmbralProgramacionPct)
+                {
+                    cola.Enqueue(punto, (0, punto.Id));
+                    continue;
+                }
+                if (punto.GeneracionKgDia == 0)
+                {
+                    continue;
+                }
                 double tasaLlenadoPctDia = punto.CapacidadLitros == 0
                     ? 0
                     : punto.GeneracionKgDia / ObtenerDensidad(campus, punto.TipoResiduo) / punto.CapacidadLitros * 100;
@@ -81,7 +90,7 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Services
             }
 
             ParametrosResiduo parametros = coincidencias[0];
-            parametros.Validar();
+            parametros.ValidarDensidad();
             return parametros.DensidadKgPorLitro;
         }
     }

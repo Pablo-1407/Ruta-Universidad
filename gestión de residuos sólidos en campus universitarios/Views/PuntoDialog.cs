@@ -164,12 +164,22 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Views
             double pesoZona = 0;
             if (!esCentroAcopio
                 && (!double.TryParse(_capacidad.Text, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.CurrentCulture, out capacidad)
+                    || !double.IsFinite(capacidad)
                     || capacidad <= 0
                     || !double.TryParse(_generacion.Text, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.CurrentCulture, out generacion)
+                    || !double.IsFinite(generacion)
+                    || generacion < 0
                     || !int.TryParse(_diasSinRecoleccion.Text, NumberStyles.Integer, CultureInfo.CurrentCulture, out dias)
+                    || dias < 0
                     || !double.TryParse(_pesoZona.Text, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.CurrentCulture, out pesoZona)))
             {
-                MessageBox.Show(this, "Revisa los valores de generación, días y peso de zona.", "Datos no válidos", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(this, "Revisa la capacidad, generación, días y peso de zona.", "Datos no válidos", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (!esCentroAcopio && _tipoResiduo.SelectedIndex < 0)
+            {
+                MessageBox.Show(this, "Selecciona un tipo de residuo.", "Dato requerido", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
