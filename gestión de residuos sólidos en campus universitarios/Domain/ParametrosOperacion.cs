@@ -12,13 +12,17 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Domain
 
         public void Validar()
         {
+            ValidarParaProgramacion();
             ValidarPositivo(CapacidadVehiculoLitros, nameof(CapacidadVehiculoLitros));
             ValidarPositivo(VelocidadMediaKmHora, nameof(VelocidadMediaKmHora));
             ValidarNoNegativo(CostoPorKm, nameof(CostoPorKm));
             ValidarNoNegativo(CostoPorHora, nameof(CostoPorHora));
             ValidarNoNegativo(MinutosServicioPorContenedor, nameof(MinutosServicioPorContenedor));
             ValidarNoNegativo(MinutosDescarga, nameof(MinutosDescarga));
+        }
 
+        public void ValidarParaProgramacion()
+        {
             if (!double.IsFinite(UmbralProgramacionPct) || UmbralProgramacionPct is <= 0 or > 100)
             {
                 throw new ArgumentOutOfRangeException(nameof(UmbralProgramacionPct), "El umbral debe estar entre 0 y 100.");

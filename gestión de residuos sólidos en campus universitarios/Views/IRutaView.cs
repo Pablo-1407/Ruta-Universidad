@@ -37,9 +37,11 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Views
             ParametrosOperacion parametrosOperacion,
             IReadOnlyList<ParametrosResiduo> parametrosResiduos,
             out ParametrosOperacion? parametrosActualizados,
-            out IReadOnlyList<ParametrosResiduo>? residuosActualizados);
+            out IReadOnlyList<ParametrosResiduo>? residuosActualizados,
+            IReadOnlyCollection<TipoResiduo>? tiposDensidadPendiente);
 
         bool ConfirmarAccion(string mensaje);
+        bool ConfirmarConfiguracionResiduos(string mensaje);
 
         string? SeleccionarArchivoCampus(bool guardar);
         string? SeleccionarImagenMapa();

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using gestión_de_residuos_sólidos_en_campus_universitarios.Domain;
@@ -326,7 +327,28 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Data
                 }));
             }
 
-            File.WriteAllLines(rutaCompleta, lineas, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            string rutaTemporal = Path.Combine(
+                directorio,
+                $".{Path.GetFileName(rutaCompleta)}.{Guid.NewGuid():N}.tmp");
+            try
+            {
+                File.WriteAllLines(rutaTemporal, lineas, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+                File.Move(rutaTemporal, rutaCompleta, overwrite: true);
+            }
+            finally
+            {
+                try
+                {
+                    if (File.Exists(rutaTemporal))
+                    {
+                        File.Delete(rutaTemporal);
+                    }
+                }
+                catch (Exception excepcion)
+                {
+                    Trace.TraceError($"No se pudo eliminar el archivo temporal {rutaTemporal}: {excepcion}");
+                }
+            }
         }
 
         public Task GuardarAsync(CampusData campus, string rutaArchivo, CancellationToken cancellationToken = default) =>

@@ -7,7 +7,7 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Services
         public IReadOnlyList<ProgramacionRecoleccion> GenerarProgramacion(CampusData campus, DateTimeOffset ahora)
         {
             ArgumentNullException.ThrowIfNull(campus);
-            campus.ParametrosOperacion.Validar();
+            campus.ParametrosOperacion.ValidarParaProgramacion();
 
             PuntoRecoleccion[] centros = campus.Puntos
                 .Where(p => p.Tipo == TipoPunto.CentroAcopio)
@@ -17,11 +17,20 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Services
                 throw new InvalidOperationException("Registra exactamente un centro de acopio antes de programar recolecciones.");
             }
 
-            PriorityQueue<PuntoRecoleccion, (double DiasHastaUmbral, int Id)> cola = new();
-            int nextId = campus.Programaciones.Count == 0 ? 1 : campus.Programaciones.Max(p => p.Id) + 1;
-            foreach (PuntoRecoleccion punto in campus.Puntos.Where(p => p.Tipo == TipoPunto.Recoleccion))
+            PuntoRecoleccion[] puntosRecoleccion = campus.Puntos
+                .Where(p => p.Tipo == TipoPunto.Recoleccion)
+                .ToArray();
+            foreach (PuntoRecoleccion punto in puntosRecoleccion)
             {
                 punto.ValidarDatosOperativos();
+            }
+
+            ValidarDensidadesNecesarias(campus, puntosRecoleccion);
+
+            PriorityQueue<PuntoRecoleccion, (double DiasHastaUmbral, int Id)> cola = new();
+            int nextId = campus.Programaciones.Count == 0 ? 1 : campus.Programaciones.Max(p => p.Id) + 1;
+            foreach (PuntoRecoleccion punto in puntosRecoleccion)
+            {
                 if (punto.NivelLlenadoPct >= campus.ParametrosOperacion.UmbralProgramacionPct)
                 {
                     cola.Enqueue(punto, (0, punto.Id));
@@ -76,6 +85,64 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Services
             {
                 programacion.Validar();
                 campus.Programaciones.Add(programacion);
+            }
+        }
+
+        private static void ValidarDensidadesNecesarias(CampusData campus, IEnumerable<PuntoRecoleccion> puntos)
+        {
+            TipoResiduo[] tiposNecesarios = puntos
+                .Where(p => p.NivelLlenadoPct >= campus.ParametrosOperacion.UmbralProgramacionPct
+                    || p.GeneracionKgDia > 0)
+                .Select(p => p.TipoResiduo)
+                .Distinct()
+                .ToArray();
+            List<ProblemaDensidadResiduo> problemas = [];
+
+            foreach (TipoResiduo tipo in tiposNecesarios)
+            {
+                ParametrosResiduo[] coincidencias = campus.ParametrosResiduos
+                    .Where(p => p.Tipo == tipo)
+                    .ToArray();
+                if (coincidencias.Length == 0)
+                {
+                    problemas.Add(new ProblemaDensidadResiduo(tipo,
+                    [
+                        "crear una única configuración para este residuo",
+                        "indicar una densidad positiva en kg/l y su fuente documental"
+                    ]));
+                    continue;
+                }
+
+                if (coincidencias.Length > 1)
+                {
+                    problemas.Add(new ProblemaDensidadResiduo(tipo,
+                    [
+                        $"hay {coincidencias.Length} configuraciones; debe quedar una sola"
+                    ]));
+                    continue;
+                }
+
+                ParametrosResiduo parametros = coincidencias[0];
+                List<string> informacionPendiente = [];
+                if (!double.IsFinite(parametros.DensidadKgPorLitro) || parametros.DensidadKgPorLitro <= 0)
+                {
+                    informacionPendiente.Add("indicar una densidad positiva y finita en kg/l");
+                }
+
+                if (string.IsNullOrWhiteSpace(parametros.FuenteDensidad))
+                {
+                    informacionPendiente.Add("añadir la fuente documental de la densidad");
+                }
+
+                if (informacionPendiente.Count > 0)
+                {
+                    problemas.Add(new ProblemaDensidadResiduo(tipo, informacionPendiente));
+                }
+            }
+
+            if (problemas.Count > 0)
+            {
+                throw new DensidadesResiduosIncompletasException(problemas);
             }
         }
 

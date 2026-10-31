@@ -14,6 +14,7 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios
         [STAThread]
         static void Main()
         {
+            Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
             // To customize application configuration such as set high DPI settings or default font,
             // see https://aka.ms/applicationconfiguration.
             ApplicationConfiguration.Initialize();
@@ -24,10 +25,34 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios
                 new VecinoMasCercano(),
                 new RutaSinOptimizar(),
                 new IndicadoresService());
-            RutaPresenter presenter = new(vista, new TxtCampusRepository(), servicio);
-            presenter.Inicializar();
+            ManejadorErrores manejadorErrores = new((mensaje, error) => vista.MostrarMensaje(mensaje, error));
+            Application.ThreadException += (_, args) =>
+            {
+                manejadorErrores.Manejar(args.Exception, "evento no controlado de la interfaz", registrarSiempre: true);
+                Application.Exit();
+            };
+            AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+            {
+                Exception excepcion = args.ExceptionObject as Exception
+                    ?? new InvalidOperationException(Convert.ToString(args.ExceptionObject) ?? "Error no controlado.");
+                manejadorErrores.Manejar(excepcion, "excepción no controlada del proceso", registrarSiempre: true);
+            };
+            TaskScheduler.UnobservedTaskException += (_, args) =>
+            {
+                args.SetObserved();
+                manejadorErrores.Manejar(args.Exception.Flatten(), "tarea en segundo plano", registrarSiempre: true);
+            };
 
-            Application.Run(vista);
+            RutaPresenter presenter = new(vista, new TxtCampusRepository(), servicio, manejadorErrores);
+            try
+            {
+                presenter.Inicializar();
+                Application.Run(vista);
+            }
+            catch (Exception excepcion)
+            {
+                manejadorErrores.Manejar(excepcion, "iniciar la aplicación", registrarSiempre: true);
+            }
         }
     }
 }

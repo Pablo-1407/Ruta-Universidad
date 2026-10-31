@@ -9,14 +9,19 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Views
         private readonly DataGridView _tablaResiduos = new();
         private readonly ParametrosOperacion _parametrosOperacion;
         private readonly List<ParametrosResiduo> _parametrosResiduos;
+        private readonly HashSet<TipoResiduo> _tiposDensidadPendiente;
 
         public ParametrosOperacion ParametrosOperacion { get; private set; } = new();
         public IReadOnlyList<ParametrosResiduo> ParametrosResiduos { get; private set; } = [];
 
-        public ConfiguracionDialog(ParametrosOperacion parametrosOperacion, IEnumerable<ParametrosResiduo> parametrosResiduos)
+        public ConfiguracionDialog(
+            ParametrosOperacion parametrosOperacion,
+            IEnumerable<ParametrosResiduo> parametrosResiduos,
+            IEnumerable<TipoResiduo>? tiposDensidadPendiente = null)
         {
             _parametrosOperacion = parametrosOperacion;
             _parametrosResiduos = parametrosResiduos.ToList();
+            _tiposDensidadPendiente = tiposDensidadPendiente?.ToHashSet() ?? new HashSet<TipoResiduo>();
             Text = "Configuración operativa y de residuos";
             StartPosition = FormStartPosition.CenterParent;
             MinimumSize = new Size(800, 540);
@@ -36,6 +41,10 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Views
             residuos.Controls.Add(CrearTablaResiduos());
             pestañas.TabPages.Add(operacion);
             pestañas.TabPages.Add(residuos);
+            if (_tiposDensidadPendiente.Count > 0)
+            {
+                pestañas.SelectedTab = residuos;
+            }
 
             Button guardar = new() { Text = "Guardar configuración", AutoSize = true };
             Button cancelar = new() { Text = "Cancelar", AutoSize = true, DialogResult = DialogResult.Cancel };
@@ -122,9 +131,9 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Views
 
             foreach (TipoResiduo tipo in Enum.GetValues<TipoResiduo>().Where(tipo => tipo != TipoResiduo.SinClasificar))
             {
-                ParametrosResiduo parametros = _parametrosResiduos.SingleOrDefault(p => p.Tipo == tipo)
+                ParametrosResiduo parametros = _parametrosResiduos.FirstOrDefault(p => p.Tipo == tipo)
                     ?? new ParametrosResiduo { Tipo = tipo };
-                _tablaResiduos.Rows.Add(
+                int indiceFila = _tablaResiduos.Rows.Add(
                     tipo,
                     Formatear(parametros.DensidadKgPorLitro),
                     Formatear(parametros.PorcentajeAprovechablePct),
@@ -132,6 +141,23 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Views
                     parametros.FuenteDensidad,
                     parametros.FuenteAprovechamiento,
                     parametros.FuenteEmisiones);
+                if (_tiposDensidadPendiente.Contains(tipo))
+                {
+                    _tablaResiduos.Rows[indiceFila].Cells["Densidad"].Style.BackColor = Color.LightYellow;
+                    _tablaResiduos.Rows[indiceFila].Cells["FuenteDensidad"].Style.BackColor = Color.LightYellow;
+                }
+            }
+
+            if (_tiposDensidadPendiente.Count > 0)
+            {
+                TipoResiduo tipoPendiente = _tiposDensidadPendiente.First();
+                DataGridViewRow? filaPendiente = _tablaResiduos.Rows
+                    .Cast<DataGridViewRow>()
+                    .FirstOrDefault(fila => (TipoResiduo)fila.Cells["Tipo"].Value! == tipoPendiente);
+                if (filaPendiente is not null)
+                {
+                    _tablaResiduos.CurrentCell = filaPendiente.Cells["Densidad"];
+                }
             }
 
             return _tablaResiduos;
@@ -184,6 +210,8 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Views
                     });
                 }
 
+                ValidarDensidadesPendientes(residuos);
+
                 ParametrosOperacion = parametros;
                 ParametrosResiduos = residuos;
                 DialogResult = DialogResult.OK;
@@ -192,6 +220,32 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Views
             catch (Exception ex)
             {
                 MessageBox.Show(this, ex.Message, "Configuración no válida", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        private void ValidarDensidadesPendientes(IReadOnlyCollection<ParametrosResiduo> residuos)
+        {
+            foreach (TipoResiduo tipo in _tiposDensidadPendiente)
+            {
+                ParametrosResiduo? parametros = residuos.FirstOrDefault(p => p.Tipo == tipo);
+                DataGridViewRow fila = _tablaResiduos.Rows
+                    .Cast<DataGridViewRow>()
+                    .First(row => (TipoResiduo)row.Cells["Tipo"].Value! == tipo);
+
+                if (parametros is null || !double.IsFinite(parametros.DensidadKgPorLitro)
+                    || parametros.DensidadKgPorLitro <= 0)
+                {
+                    _tablaResiduos.CurrentCell = fila.Cells["Densidad"];
+                    _tablaResiduos.Focus();
+                    throw new ArgumentException($"La densidad de {tipo} debe ser positiva y finita, expresada en kg/l.");
+                }
+
+                if (string.IsNullOrWhiteSpace(parametros.FuenteDensidad))
+                {
+                    _tablaResiduos.CurrentCell = fila.Cells["FuenteDensidad"];
+                    _tablaResiduos.Focus();
+                    throw new ArgumentException($"Añade una fuente documental para la densidad de {tipo}.");
+                }
             }
         }
 

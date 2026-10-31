@@ -9,4 +9,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Update="Views\FrmPrincipal.resx">
+      <Generator></Generator>
+    </EmbeddedResource>
+  </ItemGroup>
+
 </Project>

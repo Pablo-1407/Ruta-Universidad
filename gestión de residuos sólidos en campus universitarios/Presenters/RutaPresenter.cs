@@ -1,4 +1,5 @@
-﻿using gestión_de_residuos_sólidos_en_campus_universitarios.Data;
+﻿using System.Diagnostics;
+using gestión_de_residuos_sólidos_en_campus_universitarios.Data;
 using gestión_de_residuos_sólidos_en_campus_universitarios.Domain;
 using gestión_de_residuos_sólidos_en_campus_universitarios.Services;
 using gestión_de_residuos_sólidos_en_campus_universitarios.Views;
@@ -10,52 +11,65 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Presenters
         private readonly IRutaView _vista;
         private readonly IPuntoRepository _repositorio;
         private readonly RecoleccionService _recoleccionService;
+        private readonly ManejadorErrores _manejadorErrores;
         private readonly ProgramacionService _programacionService = new();
         private readonly IndicadoresService _indicadoresService = new();
         private CampusData _campus = new();
         private string? _rutaArchivoActual;
         private int _operacionEnCurso;
 
-        public RutaPresenter(IRutaView vista, IPuntoRepository repositorio, RecoleccionService recoleccionService)
+        public RutaPresenter(
+            IRutaView vista,
+            IPuntoRepository repositorio,
+            RecoleccionService recoleccionService,
+            ManejadorErrores manejadorErrores)
         {
             _vista = vista;
             _repositorio = repositorio;
             _recoleccionService = recoleccionService;
+            _manejadorErrores = manejadorErrores;
 
-            _vista.MapaPulsado += CrearPunto;
-            _vista.ImagenMapaSolicitada += CargarImagenMapa;
-            _vista.CargarCampusSolicitado += CargarCampus;
-            _vista.GuardarCampusSolicitado += GuardarCampus;
-            _vista.GenerarRutaSolicitada += GenerarRuta;
-            _vista.ConfigurarOperacionSolicitada += ConfigurarOperacion;
-            _vista.GenerarProgramacionSolicitada += GenerarProgramacion;
-            _vista.RegistrarRecoleccionSolicitada += RegistrarRecoleccion;
-            _vista.EditarPuntoSolicitado += EditarPunto;
-            _vista.EliminarPuntoSolicitado += EliminarPunto;
-            _vista.AgregarConexionSolicitada += AgregarConexion;
-            _vista.EditarConexionSolicitada += EditarConexion;
-            _vista.EliminarConexionSolicitada += EliminarConexion;
+            _vista.MapaPulsado += (x, y) => EjecutarSeguro(() => CrearPunto(x, y), "crear punto");
+            _vista.ImagenMapaSolicitada += () => EjecutarSeguro(CargarImagenMapa, "cargar imagen");
+            _vista.CargarCampusSolicitado += () => EjecutarSeguroAsync(CargarCampus, "cargar campus");
+            _vista.GuardarCampusSolicitado += () => EjecutarSeguroAsync(GuardarCampus, "guardar campus");
+            _vista.GenerarRutaSolicitada += () => EjecutarSeguroAsync(GenerarRuta, "generar ruta");
+            _vista.ConfigurarOperacionSolicitada += () => EjecutarSeguro(ConfigurarOperacion, "configurar operación");
+            _vista.GenerarProgramacionSolicitada += () => EjecutarSeguroAsync(GenerarProgramacion, "generar programación");
+            _vista.RegistrarRecoleccionSolicitada += () => EjecutarSeguroAsync(RegistrarRecoleccion, "registrar recolección");
+            _vista.EditarPuntoSolicitado += () => EjecutarSeguro(EditarPunto, "editar punto");
+            _vista.EliminarPuntoSolicitado += () => EjecutarSeguro(EliminarPunto, "eliminar punto");
+            _vista.AgregarConexionSolicitada += () => EjecutarSeguro(AgregarConexion, "agregar conexión");
+            _vista.EditarConexionSolicitada += () => EjecutarSeguro(EditarConexion, "editar conexión");
+            _vista.EliminarConexionSolicitada += () => EjecutarSeguro(EliminarConexion, "eliminar conexión");
         }
 
         private void ConfigurarOperacion()
+        {
+            ConfigurarOperacion(null);
+        }
+
+        private void ConfigurarOperacion(IReadOnlyCollection<TipoResiduo>? tiposDensidadPendiente)
         {
             if (!_vista.SolicitarConfiguracion(
                     _campus.ParametrosOperacion,
                     _campus.ParametrosResiduos,
                     out ParametrosOperacion? parametrosOperacion,
-                    out IReadOnlyList<ParametrosResiduo>? parametrosResiduos)
+                    out IReadOnlyList<ParametrosResiduo>? parametrosResiduos,
+                    tiposDensidadPendiente)
                 || parametrosOperacion is null
                 || parametrosResiduos is null)
             {
                 return;
             }
 
-            _campus.ParametrosOperacion = parametrosOperacion;
-            _campus.ParametrosResiduos = parametrosResiduos.ToList();
-            ActualizarVista();
+            CampusData campusTemporal = CopiarCampus(_campus);
+            campusTemporal.ParametrosOperacion = parametrosOperacion;
+            campusTemporal.ParametrosResiduos = parametrosResiduos.ToList();
+            ConfirmarCampus(campusTemporal);
         }
 
-        private async void GenerarProgramacion()
+        private async Task GenerarProgramacion()
         {
             if (!IniciarOperacion("Calculando programación…"))
             {
@@ -64,15 +78,23 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Presenters
 
             try
             {
+                CampusData campusTemporal = CopiarCampus(_campus);
                 IReadOnlyList<ProgramacionRecoleccion> generadas = await Task.Run(
-                    () => _programacionService.GenerarProgramacion(_campus, DateTimeOffset.Now));
-                _programacionService.GuardarProgramacion(_campus, generadas);
-                ActualizarVista();
+                    () => _programacionService.GenerarProgramacion(campusTemporal, DateTimeOffset.Now));
+                _programacionService.GuardarProgramacion(campusTemporal, generadas);
+                ConfirmarCampus(campusTemporal);
                 _vista.MostrarMensaje($"Se generaron {generadas.Count} recolecciones programadas.");
             }
-            catch (Exception ex)
+            catch (DensidadesResiduosIncompletasException excepcion)
             {
-                _vista.MostrarMensaje(ex.Message, error: true);
+                TipoResiduo[] tiposPendientes = excepcion.Problemas
+                    .Select(problema => problema.Tipo)
+                    .Distinct()
+                    .ToArray();
+                if (_vista.ConfirmarConfiguracionResiduos(CrearMensajeDensidadesPendientes(excepcion)))
+                {
+                    ConfigurarOperacion(tiposPendientes);
+                }
             }
             finally
             {
@@ -80,7 +102,16 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Presenters
             }
         }
 
-        private async void RegistrarRecoleccion()
+        private static string CrearMensajeDensidadesPendientes(DensidadesResiduosIncompletasException excepcion)
+        {
+            string detalle = string.Join(
+                Environment.NewLine,
+                excepcion.Problemas.Select(problema =>
+                    $"• {problema.Tipo}: {string.Join("; ", problema.InformacionPendiente)}."));
+            return $"No se puede generar la programación porque faltan datos documentados de densidad:{Environment.NewLine}{detalle}{Environment.NewLine}{Environment.NewLine}¿Quieres abrir ahora la configuración de residuos?";
+        }
+
+        private async Task RegistrarRecoleccion()
         {
             ProgramacionRecoleccion? programacion = _campus.Programaciones
                 .Where(p => p.Estado == EstadoProgramacion.Programada)
@@ -122,17 +153,23 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Presenters
 
             try
             {
+                CampusData campusTemporal = CopiarCampus(_campus);
+                ProgramacionRecoleccion programacionTemporal = campusTemporal.Programaciones
+                    .Single(p => p.Id == programacion.Id);
+                PuntoRecoleccion[] puntosTemporales = programacionTemporal.PuntosIds
+                    .Select(id => campusTemporal.Puntos.Single(p => p.Id == id))
+                    .ToArray();
                 ResultadoRecoleccion resultado = await Task.Run(
-                    () => _recoleccionService.GenerarRuta(_campus, puntos.Select(p => p.Id).ToArray()));
-                double volumen = _indicadoresService.EstimarVolumenActualLitros(puntos);
+                    () => _recoleccionService.GenerarRuta(campusTemporal, puntosTemporales.Select(p => p.Id).ToArray()));
+                double volumen = _indicadoresService.EstimarVolumenActualLitros(puntosTemporales);
                 RegistroHistorialRecoleccion registro = new()
                 {
-                    Id = _campus.HistorialRecolecciones.Count == 0 ? 1 : _campus.HistorialRecolecciones.Max(r => r.Id) + 1,
+                    Id = campusTemporal.HistorialRecolecciones.Count == 0 ? 1 : campusTemporal.HistorialRecolecciones.Max(r => r.Id) + 1,
                     FechaCompletada = DateTimeOffset.Now,
                     CentroAcopioId = centros[0].Id,
-                    PuntosIds = puntos.Select(p => p.Id).ToList(),
+                    PuntosIds = puntosTemporales.Select(p => p.Id).ToList(),
                     VolumenLitros = volumen,
-                    KilosRecolectados = _indicadoresService.EstimarKilos(puntos),
+                    KilosRecolectados = _indicadoresService.EstimarKilos(puntosTemporales),
                     DistanciaMetros = resultado.RutaOptimizada.DistanciaTotal,
                     DuracionMinutos = resultado.DuracionTotalMinutos,
                     Costo = resultado.CostoEstimado,
@@ -141,23 +178,19 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Presenters
                 };
                 registro.Validar();
 
-                foreach (PuntoRecoleccion punto in puntos)
+                foreach (PuntoRecoleccion punto in puntosTemporales)
                 {
                     punto.NivelLlenadoPct = 0;
                     punto.DiasSinRecoleccion = 0;
                 }
 
-                programacion.Estado = EstadoProgramacion.Completada;
-                programacion.FechaCompletada = registro.FechaCompletada;
-                _campus.HistorialRecolecciones.Add(registro);
-                ActualizarVista();
+                programacionTemporal.Estado = EstadoProgramacion.Completada;
+                programacionTemporal.FechaCompletada = registro.FechaCompletada;
+                campusTemporal.HistorialRecolecciones.Add(registro);
+                ConfirmarCampus(campusTemporal);
                 _vista.MostrarMensaje(_rutaArchivoActual is null
                     ? "La recolección se registró en el historial en memoria. Guarda el campus en TXT para conservarla."
                     : "La recolección se registró en el historial. Guarda el campus para conservar los cambios en TXT.");
-            }
-            catch (Exception ex)
-            {
-                _vista.MostrarMensaje(ex.Message, error: true);
             }
             finally
             {
@@ -167,8 +200,10 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Presenters
 
         public void Inicializar() => _vista.MostrarCampus(_campus);
 
-        private async void GenerarRuta()
+        private async Task GenerarRuta()
         {
+            _campus.ParametrosOperacion.Validar();
+
             if (!IniciarOperacion("Calculando rutas e indicadores…"))
             {
                 return;
@@ -181,10 +216,6 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Presenters
                 ResultadoRecoleccion resultado = await Task.Run(
                     () => _recoleccionService.GenerarRuta(campus, cantidadPuntos));
                 _vista.MostrarResultado(resultado);
-            }
-            catch (Exception ex)
-            {
-                _vista.MostrarMensaje(ex.Message, error: true);
             }
             finally
             {
@@ -199,20 +230,14 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Presenters
                 return;
             }
 
-            punto.Id = _campus.Puntos.Count == 0 ? 1 : _campus.Puntos.Max(p => p.Id) + 1;
+            CampusData campusTemporal = CopiarCampus(_campus);
+            punto.Id = campusTemporal.Puntos.Count == 0 ? 1 : campusTemporal.Puntos.Max(p => p.Id) + 1;
             punto.X = x;
             punto.Y = y;
 
-            try
-            {
-                ValidarPunto(punto, null);
-                _campus.Puntos.Add(punto);
-                ActualizarVista();
-            }
-            catch (Exception ex)
-            {
-                _vista.MostrarMensaje(ex.Message, error: true);
-            }
+            ValidarPunto(campusTemporal, punto, null);
+            campusTemporal.Puntos.Add(punto);
+            ConfirmarCampus(campusTemporal);
         }
 
         private void EditarPunto()
@@ -234,17 +259,11 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Presenters
             actualizado.X = original.X;
             actualizado.Y = original.Y;
 
-            try
-            {
-                ValidarPunto(actualizado, original.Id);
-                int indice = _campus.Puntos.IndexOf(original);
-                _campus.Puntos[indice] = actualizado;
-                ActualizarVista();
-            }
-            catch (Exception ex)
-            {
-                _vista.MostrarMensaje(ex.Message, error: true);
-            }
+            CampusData campusTemporal = CopiarCampus(_campus);
+            ValidarPunto(campusTemporal, actualizado, original.Id);
+            int indice = campusTemporal.Puntos.FindIndex(p => p.Id == original.Id);
+            campusTemporal.Puntos[indice] = actualizado;
+            ConfirmarCampus(campusTemporal);
         }
 
         private void EliminarPunto()
@@ -256,9 +275,10 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Presenters
                 return;
             }
 
-            _campus.Puntos.Remove(punto);
-            _campus.Conexiones.RemoveAll(c => c.OrigenId == punto.Id || c.DestinoId == punto.Id);
-            ActualizarVista();
+            CampusData campusTemporal = CopiarCampus(_campus);
+            campusTemporal.Puntos.RemoveAll(p => p.Id == punto.Id);
+            campusTemporal.Conexiones.RemoveAll(c => c.OrigenId == punto.Id || c.DestinoId == punto.Id);
+            ConfirmarCampus(campusTemporal);
         }
 
         private void AgregarConexion()
@@ -269,16 +289,10 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Presenters
                 return;
             }
 
-            try
-            {
-                ValidarConexion(conexion, null);
-                _campus.Conexiones.Add(conexion);
-                ActualizarVista();
-            }
-            catch (Exception ex)
-            {
-                _vista.MostrarMensaje(ex.Message, error: true);
-            }
+            CampusData campusTemporal = CopiarCampus(_campus);
+            ValidarConexion(campusTemporal, conexion, null);
+            campusTemporal.Conexiones.Add(conexion);
+            ConfirmarCampus(campusTemporal);
         }
 
         private void EditarConexion()
@@ -296,17 +310,13 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Presenters
                 return;
             }
 
-            try
-            {
-                ValidarConexion(actualizada, original);
-                int indice = _campus.Conexiones.IndexOf(original);
-                _campus.Conexiones[indice] = actualizada;
-                ActualizarVista();
-            }
-            catch (Exception ex)
-            {
-                _vista.MostrarMensaje(ex.Message, error: true);
-            }
+            CampusData campusTemporal = CopiarCampus(_campus);
+            ConexionCampus originalTemporal = campusTemporal.Conexiones
+                .Single(c => c.OrigenId == original.OrigenId && c.DestinoId == original.DestinoId);
+            ValidarConexion(campusTemporal, actualizada, originalTemporal);
+            int indice = campusTemporal.Conexiones.IndexOf(originalTemporal);
+            campusTemporal.Conexiones[indice] = actualizada;
+            ConfirmarCampus(campusTemporal);
         }
 
         private void EliminarConexion()
@@ -318,8 +328,11 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Presenters
                 return;
             }
 
-            _campus.Conexiones.Remove(conexion);
-            ActualizarVista();
+            CampusData campusTemporal = CopiarCampus(_campus);
+            ConexionCampus conexionTemporal = campusTemporal.Conexiones
+                .Single(c => c.OrigenId == conexion.OrigenId && c.DestinoId == conexion.DestinoId);
+            campusTemporal.Conexiones.Remove(conexionTemporal);
+            ConfirmarCampus(campusTemporal);
         }
 
         private void CargarImagenMapa()
@@ -330,11 +343,12 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Presenters
                 return;
             }
 
-            _campus.RutaImagenMapa = ruta;
-            ActualizarVista();
+            CampusData campusTemporal = CopiarCampus(_campus);
+            campusTemporal.RutaImagenMapa = ruta;
+            ConfirmarCampus(campusTemporal);
         }
 
-        private async void CargarCampus()
+        private async Task CargarCampus()
         {
             string? ruta = _vista.SeleccionarArchivoCampus(guardar: false);
             if (string.IsNullOrWhiteSpace(ruta))
@@ -351,13 +365,8 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Presenters
             {
                 CampusData campus = await _repositorio.CargarAsync(ruta);
                 ValidarCampus(campus);
-                _campus = campus;
+                ConfirmarCampus(campus);
                 _rutaArchivoActual = Path.GetFullPath(ruta);
-                ActualizarVista();
-            }
-            catch (Exception ex)
-            {
-                _vista.MostrarMensaje($"No se pudo cargar el campus: {ex.Message}", error: true);
             }
             finally
             {
@@ -365,7 +374,7 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Presenters
             }
         }
 
-        private async void GuardarCampus()
+        private async Task GuardarCampus()
         {
             string? ruta = _rutaArchivoActual ?? _vista.SeleccionarArchivoCampus(guardar: true);
             if (string.IsNullOrWhiteSpace(ruta))
@@ -380,19 +389,41 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Presenters
 
             try
             {
-                ValidarCampus(_campus);
-                await _repositorio.GuardarAsync(_campus, ruta);
-                _rutaArchivoActual = Path.GetFullPath(ruta);
-                ActualizarVista();
+                CampusData campusTemporal = CopiarCampus(_campus);
+                ValidarCampus(campusTemporal);
+                string rutaCompleta = Path.GetFullPath(ruta);
+                await _repositorio.GuardarAsync(campusTemporal, rutaCompleta);
+                _campus = campusTemporal;
+                _rutaArchivoActual = rutaCompleta;
                 _vista.MostrarMensaje("El campus se guardó correctamente.");
-            }
-            catch (Exception ex)
-            {
-                _vista.MostrarMensaje($"No se pudo guardar el campus: {ex.Message}", error: true);
             }
             finally
             {
                 FinalizarOperacion();
+            }
+        }
+
+        private void EjecutarSeguro(Action accion, string nombreOperacion)
+        {
+            try
+            {
+                accion();
+            }
+            catch (Exception excepcion)
+            {
+                _manejadorErrores.Manejar(excepcion, nombreOperacion);
+            }
+        }
+
+        private async void EjecutarSeguroAsync(Func<Task> accion, string nombreOperacion)
+        {
+            try
+            {
+                await accion();
+            }
+            catch (Exception excepcion)
+            {
+                _manejadorErrores.Manejar(excepcion, nombreOperacion);
             }
         }
 
@@ -402,7 +433,97 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Presenters
             return id is null ? null : _campus.Puntos.FirstOrDefault(p => p.Id == id.Value);
         }
 
-        private void ActualizarVista() => _vista.MostrarCampus(_campus);
+        private void ConfirmarCampus(CampusData campusTemporal)
+        {
+            CampusData campusAnterior = _campus;
+            try
+            {
+                _vista.MostrarCampus(campusTemporal);
+                _campus = campusTemporal;
+            }
+            catch
+            {
+                try
+                {
+                    _vista.MostrarCampus(campusAnterior);
+                }
+                catch (Exception excepcionRestauracion)
+                {
+                    Trace.TraceError($"No se pudo restaurar la vista tras cancelar una operación: {excepcionRestauracion}");
+                }
+
+                throw;
+            }
+        }
+
+        private static CampusData CopiarCampus(CampusData campus) => new()
+        {
+            Puntos = campus.Puntos.Select(p => new PuntoRecoleccion
+            {
+                Id = p.Id,
+                Nombre = p.Nombre,
+                Tipo = p.Tipo,
+                TipoResiduo = p.TipoResiduo,
+                X = p.X,
+                Y = p.Y,
+                CapacidadLitros = p.CapacidadLitros,
+                NivelLlenadoPct = p.NivelLlenadoPct,
+                GeneracionKgDia = p.GeneracionKgDia,
+                DiasSinRecoleccion = p.DiasSinRecoleccion,
+                PesoZona = p.PesoZona
+            }).ToList(),
+            Conexiones = campus.Conexiones.Select(c => new ConexionCampus
+            {
+                OrigenId = c.OrigenId,
+                DestinoId = c.DestinoId,
+                Metros = c.Metros
+            }).ToList(),
+            ParametrosOperacion = new ParametrosOperacion
+            {
+                CapacidadVehiculoLitros = campus.ParametrosOperacion.CapacidadVehiculoLitros,
+                VelocidadMediaKmHora = campus.ParametrosOperacion.VelocidadMediaKmHora,
+                CostoPorKm = campus.ParametrosOperacion.CostoPorKm,
+                CostoPorHora = campus.ParametrosOperacion.CostoPorHora,
+                MinutosServicioPorContenedor = campus.ParametrosOperacion.MinutosServicioPorContenedor,
+                MinutosDescarga = campus.ParametrosOperacion.MinutosDescarga,
+                UmbralProgramacionPct = campus.ParametrosOperacion.UmbralProgramacionPct
+            },
+            ParametrosResiduos = campus.ParametrosResiduos.Select(p => new ParametrosResiduo
+            {
+                Tipo = p.Tipo,
+                DensidadKgPorLitro = p.DensidadKgPorLitro,
+                PorcentajeAprovechablePct = p.PorcentajeAprovechablePct,
+                FactorCO2eEvitadoKgPorKg = p.FactorCO2eEvitadoKgPorKg,
+                FuenteDensidad = p.FuenteDensidad,
+                FuenteAprovechamiento = p.FuenteAprovechamiento,
+                FuenteEmisiones = p.FuenteEmisiones
+            }).ToList(),
+            Programaciones = campus.Programaciones.Select(p => new ProgramacionRecoleccion
+            {
+                Id = p.Id,
+                FechaProgramada = p.FechaProgramada,
+                CentroAcopioId = p.CentroAcopioId,
+                PuntosIds = p.PuntosIds.ToList(),
+                VolumenEstimadoLitros = p.VolumenEstimadoLitros,
+                Estado = p.Estado,
+                FechaCompletada = p.FechaCompletada
+            }).ToList(),
+            HistorialRecolecciones = campus.HistorialRecolecciones.Select(r => new RegistroHistorialRecoleccion
+            {
+                Id = r.Id,
+                FechaCompletada = r.FechaCompletada,
+                CentroAcopioId = r.CentroAcopioId,
+                PuntosIds = r.PuntosIds.ToList(),
+                VolumenLitros = r.VolumenLitros,
+                KilosRecolectados = r.KilosRecolectados,
+                DistanciaMetros = r.DistanciaMetros,
+                DuracionMinutos = r.DuracionMinutos,
+                Costo = r.Costo,
+                KilosAprovechados = r.KilosAprovechados,
+                CO2eEvitadoKg = r.CO2eEvitadoKg
+            }).ToList(),
+            RutaImagenMapa = campus.RutaImagenMapa
+        };
 
         private bool IniciarOperacion(string mensaje)
         {
@@ -411,14 +532,28 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Presenters
                 return false;
             }
 
-            _vista.EstablecerOcupado(true, mensaje);
-            return true;
+            try
+            {
+                _vista.EstablecerOcupado(true, mensaje);
+                return true;
+            }
+            catch
+            {
+                Interlocked.Exchange(ref _operacionEnCurso, 0);
+                throw;
+            }
         }
 
         private void FinalizarOperacion()
         {
-            _vista.EstablecerOcupado(false, "Operación finalizada.");
-            Interlocked.Exchange(ref _operacionEnCurso, 0);
+            try
+            {
+                _vista.EstablecerOcupado(false, "Operación finalizada.");
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _operacionEnCurso, 0);
+            }
         }
 
         private void ValidarCampus(CampusData campus)
@@ -461,18 +596,18 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Presenters
             }
         }
 
-        private void ValidarPunto(PuntoRecoleccion punto, int? idIgnorado)
+        private static void ValidarPunto(CampusData campus, PuntoRecoleccion punto, int? idIgnorado)
         {
             ValidarDatosPunto(punto);
 
-            if (_campus.Puntos.Any(p => p.Id != idIgnorado
+            if (campus.Puntos.Any(p => p.Id != idIgnorado
                 && string.Equals(p.Nombre, punto.Nombre, StringComparison.OrdinalIgnoreCase)))
             {
                 throw new ArgumentException("Ya existe un punto con ese nombre.");
             }
 
             if (punto.Tipo == TipoPunto.CentroAcopio
-                && _campus.Puntos.Any(p => p.Id != idIgnorado && p.Tipo == TipoPunto.CentroAcopio))
+                && campus.Puntos.Any(p => p.Id != idIgnorado && p.Tipo == TipoPunto.CentroAcopio))
             {
                 throw new ArgumentException("El campus ya tiene un centro de acopio registrado.");
             }
@@ -510,15 +645,15 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Presenters
             }
         }
 
-        private void ValidarConexion(ConexionCampus conexion, ConexionCampus? ignorada)
+        private static void ValidarConexion(CampusData campus, ConexionCampus conexion, ConexionCampus? ignorada)
         {
             if (conexion.OrigenId == conexion.DestinoId)
             {
                 throw new ArgumentException("Una conexión debe unir dos puntos diferentes.");
             }
 
-            if (!_campus.Puntos.Any(p => p.Id == conexion.OrigenId)
-                || !_campus.Puntos.Any(p => p.Id == conexion.DestinoId))
+            if (!campus.Puntos.Any(p => p.Id == conexion.OrigenId)
+                || !campus.Puntos.Any(p => p.Id == conexion.DestinoId))
             {
                 throw new ArgumentException("Selecciona dos puntos existentes para crear la conexión.");
             }
@@ -528,7 +663,7 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios.Presenters
                 throw new ArgumentException("La distancia debe ser mayor que cero.");
             }
 
-            bool duplicada = _campus.Conexiones.Any(c => !ReferenceEquals(c, ignorada)
+            bool duplicada = campus.Conexiones.Any(c => !ReferenceEquals(c, ignorada)
                 && ((c.OrigenId == conexion.OrigenId && c.DestinoId == conexion.DestinoId)
                     || (c.OrigenId == conexion.DestinoId && c.DestinoId == conexion.OrigenId)));
             if (duplicada)

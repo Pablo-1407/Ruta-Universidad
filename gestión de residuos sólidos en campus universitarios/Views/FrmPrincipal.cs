@@ -48,7 +48,7 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios
 
         public Main()
         {
-            InitializeComponent();
+
             ConstruirInterfaz();
             _contenidoPrincipal = Controls[0];
             ConectarEventos();
@@ -394,13 +394,55 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios
 
         bool IRutaView.ConfirmarAccion(string mensaje) => Confirmar(mensaje);
 
+        bool IRutaView.ConfirmarConfiguracionResiduos(string mensaje)
+        {
+            using Form dialogo = new()
+            {
+                Text = "Faltan datos de residuos",
+                StartPosition = FormStartPosition.CenterParent,
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                ClientSize = new Size(620, 250),
+                MinimizeBox = false,
+                MaximizeBox = false,
+                ShowInTaskbar = false
+            };
+            TextBox detalle = new()
+            {
+                Text = mensaje,
+                Multiline = true,
+                ReadOnly = true,
+                ScrollBars = ScrollBars.Vertical,
+                BorderStyle = BorderStyle.None,
+                BackColor = SystemColors.Control,
+                Dock = DockStyle.Fill,
+                Margin = new Padding(12)
+            };
+            Button configurar = new() { Text = "Configurar", AutoSize = true, DialogResult = DialogResult.Yes };
+            Button cancelar = new() { Text = "Cancelar", AutoSize = true, DialogResult = DialogResult.Cancel };
+            FlowLayoutPanel botones = new()
+            {
+                Dock = DockStyle.Bottom,
+                Height = 48,
+                FlowDirection = FlowDirection.RightToLeft,
+                Padding = new Padding(8)
+            };
+            botones.Controls.Add(configurar);
+            botones.Controls.Add(cancelar);
+            dialogo.Controls.Add(detalle);
+            dialogo.Controls.Add(botones);
+            dialogo.AcceptButton = configurar;
+            dialogo.CancelButton = cancelar;
+            return dialogo.ShowDialog(this) == DialogResult.Yes;
+        }
+
         bool IRutaView.SolicitarConfiguracion(
             ParametrosOperacion parametrosOperacion,
             IReadOnlyList<ParametrosResiduo> parametrosResiduos,
             out ParametrosOperacion? parametrosActualizados,
-            out IReadOnlyList<ParametrosResiduo>? residuosActualizados)
+            out IReadOnlyList<ParametrosResiduo>? residuosActualizados,
+            IReadOnlyCollection<TipoResiduo>? tiposDensidadPendiente)
         {
-            using ConfiguracionDialog dialogo = new(parametrosOperacion, parametrosResiduos);
+            using ConfiguracionDialog dialogo = new(parametrosOperacion, parametrosResiduos, tiposDensidadPendiente);
             bool aceptado = dialogo.ShowDialog(this) == DialogResult.OK;
             parametrosActualizados = aceptado ? dialogo.ParametrosOperacion : null;
             residuosActualizados = aceptado ? dialogo.ParametrosResiduos : null;
@@ -630,12 +672,34 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios
 
         public void MostrarMensaje(string mensaje, bool error = false)
         {
+            string titulo = error ? "No se pudo completar la operación" : "Gestión de residuos del campus";
+            MessageBoxIcon icono = error ? MessageBoxIcon.Warning : MessageBoxIcon.Information;
+            if (IsDisposed || Disposing)
+            {
+                MessageBox.Show(mensaje, titulo, MessageBoxButtons.OK, icono);
+                return;
+            }
+
+            if (InvokeRequired)
+            {
+                try
+                {
+                    Invoke(new Action(() => MostrarMensaje(mensaje, error)));
+                }
+                catch (InvalidOperationException)
+                {
+                    MessageBox.Show(mensaje, titulo, MessageBoxButtons.OK, icono);
+                }
+
+                return;
+            }
+
             MessageBox.Show(
                 this,
                 mensaje,
-                error ? "No se pudo completar la operación" : "Gestión de residuos del campus",
+                titulo,
                 MessageBoxButtons.OK,
-                error ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
+                icono);
         }
 
         private static bool Confirmar(string mensaje) =>
@@ -828,6 +892,11 @@ namespace gestión_de_residuos_sólidos_en_campus_universitarios
                 }
                 base.Dispose(disposing);
             }
+        }
+
+        private void InitializeComponent()
+        {
+
         }
     }
 }
